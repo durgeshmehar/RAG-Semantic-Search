@@ -2,9 +2,10 @@
 
 Only SQL and row<->object translation live here -- queue semantics (retry
 policy, batching, cross-table coordination with `files`) belong to
-app.tasks.job_queue, which calls this module rather than touching the table
+app.tasks.job_queue, which calls this module (via the sql_repository
+aggregator, as sql_repository.chunks) rather than touching the table
 directly. Split out because job_queue.py had grown to mix both concerns;
-here it's SQL only, same as file_repository.py.
+here it's SQL only, same as file_repository.py, its sibling in this folder.
 """
 
 import time

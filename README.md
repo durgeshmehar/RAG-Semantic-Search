@@ -287,17 +287,18 @@ app/
 │   ├── job_queue.py      # queue semantics: batching, retry policy, files<->chunks coordination
 │   └── worker.py         # the thread pool that drains it
 ├── repositories/        # persistence only -- no business rules, no queue semantics
-│   ├── file_repository.py     # SQL for the `files` table
-│   ├── chunk_repository.py    # SQL for the `chunks` table
-│   └── vector_repository.py   # Qdrant collection storage (the write/ownership side)
+│   ├── sql_repository.py       # aggregator: sql_repository.files / sql_repository.chunks
+│   ├── vector_repository.py    # Qdrant collection storage (the write/ownership side)
+│   ├── file_storage_repository.py  # on-disk layout, atomic finalize, byte-range reads
+│   └── sql/                    # one file per SQL table, imported only via sql_repository
+│       ├── file_repository.py   # SQL for the `files` table
+│       └── chunk_repository.py  # SQL for the `chunks` table
 ├── core/                # cross-cutting, no domain knowledge
 │   ├── config.py
 │   ├── exceptions.py     # domain exceptions, one per failure case
 │   ├── error_handlers.py # maps each domain exception to an HTTP status + body
 │   ├── logging_config.py # process-wide logging setup
-│   ├── openapi.py        # X-User-Id security scheme, hand-written chunk-upload schema
-│   └── helper/
-│       └── storage.py    # on-disk layout, atomic finalize, byte-range reads
+│   └── openapi.py        # X-User-Id security scheme, hand-written chunk-upload schema
 └── db/
     └── db.py             # SQLite connection, schema, transactions
 ```
@@ -307,24 +308,30 @@ glance; a service with too much supporting code (like `upload_service.py`'s vali
 concurrency cap) gets a same-named subfolder for those *extra* files, but the orchestrator itself
 never moves into it.
 
-`core/helper/storage.py` sits under `core/` rather than under any one service or task: it is a
-plain disk-IO utility with no business rules, shared as-is by `services/upload_service.py`,
-`services/search_service.py`, and `tasks/worker.py`, so it doesn't belong to any single one of them.
+`repositories/` holds three kinds of persistence, one file (or aggregator) per kind, so opening that
+folder shows every way this service touches storage at a glance: SQL (`sql_repository.py`, backed by
+`sql/file_repository.py` and `sql/chunk_repository.py`, one per table), Qdrant
+(`vector_repository.py`), and plain disk I/O (`file_storage_repository.py` -- upload layout, atomic
+finalize, byte-range reads, shared as-is by `services/upload_service.py`,
+`services/search_service.py`, and `tasks/worker.py`, so it doesn't belong to any one of them).
+Callers never import `sql/file_repository.py` or `sql/chunk_repository.py` directly; they go through
+`sql_repository.files.*` / `sql_repository.chunks.*` so there's exactly one import path for SQL
+regardless of how many tables exist behind it.
 
-Table SQL is split the same way for `files` and `chunks`: `repositories/file_repository.py` and
-`repositories/chunk_repository.py` hold only queries and row<->object translation, while
-`tasks/job_queue.py` owns the semantics on top -- batching a claim, deciding retry vs. failure, and
-keeping both tables consistent inside one transaction. Queue rows never carry passage text (see
-below), so this is metadata- and coordinate-only persistence, same as the `files` side.
+Table SQL is split the same way for `files` and `chunks`: `sql/file_repository.py` and
+`sql/chunk_repository.py` hold only queries and row<->object translation, while `tasks/job_queue.py`
+owns the semantics on top -- batching a claim, deciding retry vs. failure, and keeping both tables
+consistent inside one transaction. Queue rows never carry passage text (see below), so this is
+metadata- and coordinate-only persistence, same as the `files` side.
 
 A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
 service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
 status code by one exception handler per error type, registered by
 [app/core/error_handlers.py](app/core/error_handlers.py)'s `register_error_handlers(app)` — the
 mapping lives in exactly one place rather than being repeated at every raise site. Services call
-repositories for persistence and `rag`/`core.helper.storage` for domain utilities; they never
-import FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and
-tested with no HTTP framework involved.
+repositories for persistence and `rag` for domain utilities; they never import FastAPI, so
+`upload_service.append_chunk()` or `search_service.search()` can be called and tested with no HTTP
+framework involved.
 
 **Why `rag/` and `tasks/` are separate from each other.** `rag/pipeline.py`'s `ingest_batch()` is a
 pure function — text and coordinates in, embedded vectors stored, no knowledge of retries or
@@ -361,10 +368,11 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | [app/rag/pipeline.py](app/rag/pipeline.py) | Embed-and-store orchestration for one batch |
 | [app/tasks/job_queue.py](app/tasks/job_queue.py) | Queue semantics: batching, retry policy, claim/complete/fail/recover |
 | [app/tasks/worker.py](app/tasks/worker.py) | Background thread pool draining the queue |
-| [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
-| [app/repositories/chunk_repository.py](app/repositories/chunk_repository.py) | SQL for the `chunks` table only |
+| [app/repositories/sql_repository.py](app/repositories/sql_repository.py) | Aggregator: the one import path for every SQL table |
+| [app/repositories/sql/file_repository.py](app/repositories/sql/file_repository.py) | SQL for the `files` table only |
+| [app/repositories/sql/chunk_repository.py](app/repositories/sql/chunk_repository.py) | SQL for the `chunks` table only |
 | [app/repositories/vector_repository.py](app/repositories/vector_repository.py) | Per-file Qdrant collection, idempotent upserts |
-| [app/core/helper/storage.py](app/core/helper/storage.py) | On-disk layout, atomic finalize, range reads |
+| [app/repositories/file_storage_repository.py](app/repositories/file_storage_repository.py) | On-disk layout, atomic finalize, range reads |
 | [app/db/db.py](app/db/db.py) | SQLite connection, schema, transactions |
 
 ---

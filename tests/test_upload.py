@@ -5,7 +5,7 @@ bytes on disk must end up identical to what the client sent, and the caller
 who created a file is the only one who can act on it.
 """
 
-from app.core.helper import storage
+from app.repositories import file_storage_repository as storage
 from tests.conftest import API, upload_file
 
 
@@ -120,7 +120,7 @@ def test_binary_first_chunk_is_rejected(client):
     )
     assert response.status_code == 415
 
-    from app.core.helper import storage
+    from app.repositories import file_storage_repository as storage
 
     # Nothing should have been written for a rejected first chunk.
     assert storage.current_size(file_id) == 0

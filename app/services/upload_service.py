@@ -22,7 +22,6 @@ import uuid
 from .upload import validators
 from .upload.concurrency import acquire as acquire_upload_slot
 from ..core import config
-from ..core.helper import storage
 from ..core.exceptions import (
     ChunkTooLarge,
     FileTooLarge,
@@ -33,8 +32,9 @@ from ..core.exceptions import (
 )
 from ..db import db
 from ..rag.ingestion.chunker import LineBuffer
-from ..repositories import file_repository, vector_repository
-from ..repositories.file_repository import FileRecord
+from ..repositories import file_storage_repository as storage
+from ..repositories import sql_repository, vector_repository
+from ..repositories.sql.file_repository import FileRecord
 from ..tasks import job_queue
 
 __all__ = [
@@ -58,7 +58,7 @@ def create_upload(owner_id: str, filename: str, total_size: int) -> str:
     """
     file_id = uuid.uuid4().hex
     with db.transaction() as conn:
-        file_repository.create(conn, file_id, owner_id, filename, total_size)
+        sql_repository.files.create(conn, file_id, owner_id, filename, total_size)
     return file_id
 
 
@@ -77,7 +77,7 @@ def append_chunk(file_id: str, owner_id: str, offset: int, body: bytes) -> FileR
         raise ChunkTooLarge(len(body), config.MAX_CHUNK_BYTES)
 
     with db.transaction() as conn:
-        record = file_repository.get_owned(conn, file_id, owner_id)
+        record = sql_repository.files.get_owned(conn, file_id, owner_id)
 
         if record.upload_status in ("completed", "finalizing"):
             raise UploadAlreadyDone(record.upload_status)
@@ -104,7 +104,7 @@ def append_chunk(file_id: str, owner_id: str, offset: int, body: bytes) -> FileR
         # If a previous request died between the write and the commit, the
         # file may be ahead of the database; trim it back so appends stay
         # aligned. Still inside the transaction: another request cannot have
-        # advanced bytes_received without first taking this same write lock.
+        # advanced bytes_receiveeexist_okxist_okd without first taking this same write lock.
         on_disk = storage.current_size(file_id)
         if on_disk != expected:
             storage.truncate_to(file_id, expected)
@@ -127,7 +127,7 @@ def append_chunk(file_id: str, owner_id: str, offset: int, body: bytes) -> FileR
         passages = buffer.feed(body)
 
         next_sequence = job_queue.enqueue(conn, file_id, passages, record.next_sequence)
-        file_repository.update_after_chunk(
+        sql_repository.files.update_after_chunk(
             conn,
             file_id,
             bytes_received=new_size,
@@ -136,7 +136,7 @@ def append_chunk(file_id: str, owner_id: str, offset: int, body: bytes) -> FileR
             pending_tail=buffer.pending_tail,
         )
 
-        return file_repository.get(conn, file_id)
+        return sql_repository.files.get(conn, file_id)
 
 
 def complete_upload(file_id: str, owner_id: str) -> FileRecord:
@@ -154,7 +154,7 @@ def complete_upload(file_id: str, owner_id: str) -> FileRecord:
     call is mid-way through renaming.
     """
     with db.transaction() as conn:
-        record = file_repository.get_owned(conn, file_id, owner_id)
+        record = sql_repository.files.get_owned(conn, file_id, owner_id)
 
         if record.upload_status == "completed":
             return record
@@ -168,7 +168,7 @@ def complete_upload(file_id: str, owner_id: str) -> FileRecord:
         passages = buffer.flush()
         next_sequence = job_queue.enqueue(conn, file_id, passages, record.next_sequence)
 
-        file_repository.mark_finalizing(
+        sql_repository.files.mark_finalizing(
             conn,
             file_id,
             chunks_added=len(passages),
@@ -183,23 +183,23 @@ def complete_upload(file_id: str, owner_id: str) -> FileRecord:
     storage.finalize(file_id)
 
     with db.transaction() as conn:
-        file_repository.mark_completed(conn, file_id)
-        return file_repository.get(conn, file_id)
+        sql_repository.files.mark_completed(conn, file_id)
+        return sql_repository.files.get(conn, file_id)
 
 
 def get_status(file_id: str, owner_id: str) -> FileRecord:
     conn = db.get_connection()
-    return file_repository.get_owned(conn, file_id, owner_id)
+    return sql_repository.files.get_owned(conn, file_id, owner_id)
 
 
 def list_uploads(owner_id: str, limit: int) -> list[FileRecord]:
     conn = db.get_connection()
-    return file_repository.list_owned(conn, owner_id, limit)
+    return sql_repository.files.list_owned(conn, owner_id, limit)
 
 
 def delete_upload(file_id: str, owner_id: str) -> None:
     with db.transaction() as conn:
-        file_repository.get_owned(conn, file_id, owner_id)  # raises FileNotFound if not owned
-        file_repository.delete(conn, file_id)
+        sql_repository.files.get_owned(conn, file_id, owner_id)  # raises FileNotFound if not owned
+        sql_repository.files.delete(conn, file_id)
     storage.delete_all(file_id)
     vector_repository.drop(file_id)

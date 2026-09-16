@@ -11,15 +11,15 @@ copy of the corpus in the database.
 Vector storage lives in Qdrant (see app/repositories/vector_repository.py),
 not on this filesystem.
 
-Lives under core/helper rather than services or tasks because it's a plain
-disk-IO utility with no business rules, shared by services/upload_service.py,
-services/search_service.py, and tasks/worker.py alike -- not owned by any one
-of them.
+Lives in repositories/ alongside vector_repository.py and sql/ as the third
+kind of persistence this service has: plain disk-IO, no business rules,
+shared by services/upload_service.py, services/search_service.py, and
+tasks/worker.py alike -- not owned by any one of them.
 """
 
 from pathlib import Path
 
-from .. import config
+from ..core import config
 
 
 def partial_path(file_id: str) -> Path:

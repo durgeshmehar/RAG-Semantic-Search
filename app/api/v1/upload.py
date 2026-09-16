@@ -14,7 +14,7 @@ user's files.
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from ...core import config
-from ...repositories.file_repository import FileRecord
+from ...repositories.sql.file_repository import FileRecord
 from ...schemas import upload as schemas
 from ...schemas.common import ErrorResponse
 from ...services import upload_service

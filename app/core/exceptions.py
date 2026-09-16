@@ -16,7 +16,7 @@ class DomainError(Exception):
 class FileNotFound(DomainError):
     """No file with this id, or it exists but belongs to a different owner.
 
-    Deliberately one exception for both cases (see file_repository.get_owned):
+    Deliberately one exception for both cases (see sql_repository.files.get_owned):
     returning the same error for "doesn't exist" and "not yours" stops a
     client from telling the two apart by probing ids.
     """

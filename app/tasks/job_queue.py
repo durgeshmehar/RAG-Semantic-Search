@@ -19,8 +19,8 @@ so swapping in SQS or Redis at scale is a contained change.
 
 This module owns queue *semantics* (batching, retry policy, keeping `files`
 and `chunks` in sync within one transaction) and holds no raw SQL itself --
-that lives in app.repositories.chunk_repository and .file_repository, the same
-split as everywhere else in the codebase.
+that lives in app.repositories.sql_repository (its `chunks` and `files`
+members), the same split as everywhere else in the codebase.
 """
 
 import time
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 from ..core import config
 from ..db import db
-from ..repositories import chunk_repository, file_repository
+from ..repositories import sql_repository
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ def enqueue(
         (start_sequence + offset, passage.start_byte, passage.end_byte)
         for offset, passage in enumerate(passages)
     ]
-    chunk_repository.insert_pending(conn, file_id, rows)
+    sql_repository.chunks.insert_pending(conn, file_id, rows)
     return start_sequence + len(passages)
 
 
@@ -79,17 +79,17 @@ def claim_batch(limit: int | None = None) -> list[ChunkJob]:
     with db.transaction() as conn:
         # Pick the file with the oldest pending work, then take a run of its
         # chunks -- keeping a batch to a single index.
-        file_id = chunk_repository.oldest_pending_file(conn)
+        file_id = sql_repository.chunks.oldest_pending_file(conn)
         if file_id is None:
             return []
 
-        rows = chunk_repository.select_pending_for_file(conn, file_id, limit)
+        rows = sql_repository.chunks.select_pending_for_file(conn, file_id, limit)
         if not rows:
             return []
 
         now = time.time()
-        chunk_repository.mark_processing(conn, [row.chunk_id for row in rows])
-        file_repository.mark_processing_started(conn, file_id, now)
+        sql_repository.chunks.mark_processing(conn, [row.chunk_id for row in rows])
+        sql_repository.files.mark_processing_started(conn, file_id, now)
 
         return [
             ChunkJob(
@@ -116,10 +116,10 @@ def complete_batch(jobs: list[ChunkJob]) -> None:
 
     now = time.time()
     with db.transaction() as conn:
-        chunk_repository.mark_indexed(conn, [job.chunk_id for job in jobs])
+        sql_repository.chunks.mark_indexed(conn, [job.chunk_id for job in jobs])
 
         file_id = jobs[0].file_id
-        file_repository.record_indexed(conn, file_id, count=len(jobs), now=now)
+        sql_repository.files.record_indexed(conn, file_id, count=len(jobs), now=now)
         _refresh_processing_status(conn, file_id, now)
 
 
@@ -138,12 +138,12 @@ def fail_batch(jobs: list[ChunkJob], error: str) -> None:
     exhausted = [j for j in jobs if j.retry_count + 1 >= config.MAX_RETRIES]
 
     with db.transaction() as conn:
-        chunk_repository.mark_pending_retry(conn, [j.chunk_id for j in retryable], truncated)
-        chunk_repository.mark_failed(conn, [j.chunk_id for j in exhausted], truncated)
+        sql_repository.chunks.mark_pending_retry(conn, [j.chunk_id for j in retryable], truncated)
+        sql_repository.chunks.mark_failed(conn, [j.chunk_id for j in exhausted], truncated)
 
         file_id = jobs[0].file_id
         if exhausted:
-            file_repository.record_failed(conn, file_id, count=len(exhausted), error=truncated, now=now)
+            sql_repository.files.record_failed(conn, file_id, count=len(exhausted), error=truncated, now=now)
         _refresh_processing_status(conn, file_id, now)
 
 
@@ -153,7 +153,7 @@ def _refresh_processing_status(conn, file_id: str, now: float) -> None:
     Only meaningful after the upload itself finishes -- while bytes are still
     arriving, an empty queue just means indexing has caught up.
     """
-    progress = file_repository.get_processing_progress(conn, file_id)
+    progress = sql_repository.files.get_processing_progress(conn, file_id)
     if progress is None:
         return
     upload_status, chunks_total, chunks_indexed, chunks_failed = progress
@@ -165,7 +165,7 @@ def _refresh_processing_status(conn, file_id: str, now: float) -> None:
         return
 
     status = "completed" if chunks_failed == 0 else "failed"
-    file_repository.set_processing_status(conn, file_id, status, now)
+    sql_repository.files.set_processing_status(conn, file_id, status, now)
 
 
 def recover_stuck_jobs() -> int:
@@ -183,11 +183,11 @@ def recover_stuck_jobs() -> int:
     """
     now = time.time()
     with db.transaction() as conn:
-        recovered = chunk_repository.reset_stuck_processing(conn)
+        recovered = sql_repository.chunks.reset_stuck_processing(conn)
 
         # An upload interrupted mid-flight is no longer being written to by any
         # live connection; mark it so the client knows to resume.
-        file_repository.mark_interrupted_uploads(conn, now)
+        sql_repository.files.mark_interrupted_uploads(conn, now)
 
         # A crash between marking 'finalizing' and completing the rename
         # leaves the file mid-way through POST /complete. Since chunk PUTs
@@ -195,11 +195,11 @@ def recover_stuck_jobs() -> int:
         # finish what complete() was doing, so put it back in 'uploading' and
         # let the client call /complete again -- it's idempotent past the
         # rename (storage.finalize() is a no-op if .dat already exists).
-        file_repository.revert_stuck_finalizing(conn, now)
+        sql_repository.files.revert_stuck_finalizing(conn, now)
     return recovered
 
 
 def pending_count(file_id: str | None = None) -> int:
     """Jobs still queued, for tests and the status endpoint."""
     conn = db.get_connection()
-    return chunk_repository.pending_count(conn, file_id)
+    return sql_repository.chunks.pending_count(conn, file_id)

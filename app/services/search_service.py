@@ -7,11 +7,11 @@ confirm the file exists and is owned by the caller.
 """
 
 from ..core.exceptions import NothingIndexedYet
-from ..core.helper import storage
 from ..db import db
 from ..rag.ingestion import embedder
 from ..rag.retrieval import retriever
-from ..repositories import file_repository
+from ..repositories import file_storage_repository as storage
+from ..repositories import sql_repository
 
 
 class SearchHitResult:
@@ -32,7 +32,7 @@ def search(file_id: str, owner_id: str, query: str, top_k: int) -> list[SearchHi
     been indexed so far is queryable.
     """
     conn = db.get_connection()
-    record = file_repository.get_owned(conn, file_id, owner_id)
+    record = sql_repository.files.get_owned(conn, file_id, owner_id)
 
     if record.chunks_indexed == 0:
         raise NothingIndexedYet()

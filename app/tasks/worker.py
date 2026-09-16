@@ -23,9 +23,9 @@ import logging
 import threading
 
 from ..core import config
-from ..core.helper import storage
 from ..db import db
 from ..rag.pipeline import IngestedPassage, ingest_batch
+from ..repositories import file_storage_repository as storage
 from . import job_queue
 
 logger = logging.getLogger(__name__)

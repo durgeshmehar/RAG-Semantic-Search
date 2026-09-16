@@ -10,7 +10,7 @@ app/db/db.py; the service layer that calls it should not need to change.
 import time
 from dataclasses import dataclass
 
-from ..core.exceptions import FileNotFound
+from ...core.exceptions import FileNotFound
 
 
 @dataclass(frozen=True)
