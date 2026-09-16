@@ -398,15 +398,18 @@ chunk uploads resulted in exactly 3 accepted and 5 rejected with `503`/`Retry-Af
 
 [scripts/e2e_test.py](scripts/e2e_test.py) automates that hand verification into one runnable
 script against a real running instance -- HTTP calls only, no pytest, no mocking. It starts the
-stack, then walks the full lifecycle: register an upload, send it in small chunks with a simulated
-mid-upload interruption (asserting `/status` reports the exact resume offset), complete it, poll
-until indexing catches up, run the assignment's own semantic search example, confirm a second
-`X-User-Id` is refused the file, list it, then delete it and confirm it's gone. Prints one
-`[PASS]`/`[FAIL]` line per assertion and exits non-zero on any failure.
+stack, then offers an interactive menu covering the full lifecycle: register an upload, send it in
+small chunks with a simulated mid-upload interruption (asserting `/status` reports the exact resume
+offset), complete it, poll until indexing catches up, run the assignment's own semantic search
+example, confirm a second `X-User-Id` is refused the file, list it, then delete it and confirm it's
+gone. Picking a step that depends on an earlier one (e.g. search needs a completed upload) runs
+whatever hasn't happened yet for you first. Prints one `[PASS]`/`[FAIL]` line per assertion, shows
+the menu again after each choice, and exits non-zero if anything failed.
 
 ```bash
-python3 scripts/e2e_test.py               # starts docker compose, then runs the walkthrough
-python3 scripts/e2e_test.py --no-compose  # reuses a stack already running via docker compose up
+python3 scripts/e2e_test.py               # interactive menu (starts docker compose first)
+python3 scripts/e2e_test.py --all         # run every step once, in order, no menu
+python3 scripts/e2e_test.py --no-compose  # reuse a stack already running via docker compose up
 ```
 
 Uses `httpx`, already a dependency (see [requirements.txt](requirements.txt)) for the test
