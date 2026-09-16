@@ -394,6 +394,26 @@ right section; memory sampled live via `docker stats` through a real 22.7 MB upl
 under both containers' limits; and, with `MAX_CONCURRENT_UPLOADS` set to 3, firing 8 concurrent 8 MB
 chunk uploads resulted in exactly 3 accepted and 5 rejected with `503`/`Retry-After` in ~30ms each.
 
+### End-to-end script
+
+[scripts/e2e_test.py](scripts/e2e_test.py) automates that hand verification into one runnable
+script against a real running instance -- HTTP calls only, no pytest, no mocking. It starts the
+stack, then walks the full lifecycle: register an upload, send it in small chunks with a simulated
+mid-upload interruption (asserting `/status` reports the exact resume offset), complete it, poll
+until indexing catches up, run the assignment's own semantic search example, confirm a second
+`X-User-Id` is refused the file, list it, then delete it and confirm it's gone. Prints one
+`[PASS]`/`[FAIL]` line per assertion and exits non-zero on any failure.
+
+```bash
+python3 scripts/e2e_test.py               # starts docker compose, then runs the walkthrough
+python3 scripts/e2e_test.py --no-compose  # reuses a stack already running via docker compose up
+```
+
+Uses `httpx`, already a dependency (see [requirements.txt](requirements.txt)) for the test
+suite's `TestClient` -- nothing extra to install. The sample log it uploads,
+[scripts/sample.log](scripts/sample.log), contains the same "Connection to database failed after
+30 seconds." line the assignment's example searches for.
+
 ---
 
 ## Limitations

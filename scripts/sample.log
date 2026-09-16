@@ -1,0 +1,30 @@
+INFO  Starting application server on port 8080
+INFO  Loading configuration from /etc/app/config.yaml
+WARN  Cache warmup skipped, no snapshot available
+ERROR Connection to database failed after 30 seconds.
+INFO  Retrying with exponential backoff
+INFO  User alice logged in from 10.0.0.4
+DEBUG Rendering dashboard template for tenant acme
+INFO  Scheduled nightly report generation at 02:00 UTC
+WARN  Disk usage on /var has reached 85 percent
+INFO  Payment webhook accepted for order 41182
+DEBUG Flushing metrics buffer, 512 samples
+INFO  Background job queue drained successfully
+INFO  User bob logged in from 10.0.0.9
+ERROR Failed to send email notification: SMTP timeout
+INFO  Nightly backup completed in 42 minutes
+WARN  API rate limit approaching for client key ck_8827
+INFO  New tenant "globex" provisioned successfully
+DEBUG Cache hit ratio over the last hour: 93 percent
+ERROR Disk write failed on volume /data/logs: no space left on device
+INFO  Autoscaler added one more worker node
+INFO  Session for user carol expired after 30 minutes of inactivity
+WARN  Certificate for api.example.com expires in 14 days
+INFO  Search index rebuild started for tenant acme
+DEBUG Garbage collection paused the process for 120ms
+ERROR Upstream service payments-api returned HTTP 503
+INFO  Feature flag "new-dashboard" enabled for 5 percent of users
+INFO  Health check passed for all 6 service instances
+WARN  Slow query detected: SELECT * FROM orders took 4.2 seconds
+INFO  Deployment v2.14.0 rolled out to production
+DEBUG Request trace id 7f3a9c bound to worker thread 4
