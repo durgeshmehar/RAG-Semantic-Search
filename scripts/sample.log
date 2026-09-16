@@ -1,30 +1,108 @@
 INFO  Starting application server on port 8080
 INFO  Loading configuration from /etc/app/config.yaml
+INFO  Connected to configuration service at config.internal:9000
 WARN  Cache warmup skipped, no snapshot available
+INFO  Warming up connection pool with 20 connections
 ERROR Connection to database failed after 30 seconds.
 INFO  Retrying with exponential backoff
+INFO  Database connection re-established on attempt 3
+INFO  Running pending migrations: 0042_add_orders_index, 0043_add_users_email_unique
+INFO  Migrations applied successfully in 1.8 seconds
 INFO  User alice logged in from 10.0.0.4
+INFO  User alice requested password reset
+INFO  Password reset email queued for alice@example.com
 DEBUG Rendering dashboard template for tenant acme
+DEBUG Template cache miss for layout "admin-shell"
 INFO  Scheduled nightly report generation at 02:00 UTC
 WARN  Disk usage on /var has reached 85 percent
+WARN  Disk usage on /var has reached 90 percent
 INFO  Payment webhook accepted for order 41182
+INFO  Payment webhook accepted for order 41183
 DEBUG Flushing metrics buffer, 512 samples
+DEBUG Flushing metrics buffer, 498 samples
 INFO  Background job queue drained successfully
 INFO  User bob logged in from 10.0.0.9
+INFO  User bob updated billing address
 ERROR Failed to send email notification: SMTP timeout
+WARN  Retrying email notification, attempt 2 of 3
+INFO  Email notification sent successfully on retry
 INFO  Nightly backup completed in 42 minutes
+INFO  Backup archive uploaded to cold storage bucket
 WARN  API rate limit approaching for client key ck_8827
+WARN  API rate limit exceeded for client key ck_8827, throttling requests
 INFO  New tenant "globex" provisioned successfully
+INFO  Default admin account created for tenant globex
 DEBUG Cache hit ratio over the last hour: 93 percent
+DEBUG Cache hit ratio over the last hour: 91 percent
 ERROR Disk write failed on volume /data/logs: no space left on device
+WARN  Log rotation triggered early due to disk pressure
+INFO  Freed 2.3 GB by rotating old log files
 INFO  Autoscaler added one more worker node
+INFO  Autoscaler added a second worker node due to sustained CPU load
 INFO  Session for user carol expired after 30 minutes of inactivity
+INFO  User carol logged in again from 10.0.0.22
 WARN  Certificate for api.example.com expires in 14 days
+WARN  Certificate for api.example.com expires in 7 days
+ERROR Certificate renewal failed: ACME challenge timed out
+INFO  Certificate renewed successfully after manual retry
 INFO  Search index rebuild started for tenant acme
+INFO  Search index rebuild completed, 184213 documents indexed
 DEBUG Garbage collection paused the process for 120ms
+DEBUG Garbage collection paused the process for 340ms
+WARN  Garbage collection pause exceeded 300ms threshold
 ERROR Upstream service payments-api returned HTTP 503
+WARN  Circuit breaker opened for payments-api after 5 consecutive failures
+INFO  Circuit breaker closed, payments-api responding normally again
 INFO  Feature flag "new-dashboard" enabled for 5 percent of users
+INFO  Feature flag "new-dashboard" enabled for 25 percent of users
 INFO  Health check passed for all 6 service instances
+WARN  Health check failed for instance web-04, marking unhealthy
+INFO  Instance web-04 restarted and passed health check
 WARN  Slow query detected: SELECT * FROM orders took 4.2 seconds
+WARN  Slow query detected: SELECT * FROM audit_log took 6.7 seconds
+INFO  Added index on audit_log(created_at) to address slow query
 INFO  Deployment v2.14.0 rolled out to production
+INFO  Deployment v2.14.1 rolled out to production as a hotfix
 DEBUG Request trace id 7f3a9c bound to worker thread 4
+DEBUG Request trace id 9a12de bound to worker thread 7
+INFO  User dave logged in from 172.16.0.11
+ERROR Authentication failed for user dave: invalid two-factor code
+WARN  Repeated failed login attempts for user dave, temporary lockout applied
+INFO  Lockout for user dave lifted after cooldown period
+INFO  New API key issued for client "northwind-integration"
+WARN  Deprecated API endpoint /v1/legacy/reports called by client "northwind-integration"
+INFO  Client "northwind-integration" migrated to /v2/reports
+DEBUG Connection pool size adjusted from 20 to 30
+DEBUG Connection pool size adjusted from 30 to 25 after load dropped
+ERROR Redis connection lost, falling back to in-memory cache
+WARN  Operating in degraded mode without distributed cache
+INFO  Redis connection restored, distributed cache re-enabled
+INFO  Scheduled task "cleanup-expired-sessions" started
+INFO  Scheduled task "cleanup-expired-sessions" removed 1342 expired sessions
+DEBUG Outbound webhook to https://hooks.example.org/orders returned HTTP 200
+ERROR Outbound webhook to https://hooks.example.org/orders timed out after 10 seconds
+WARN  Webhook delivery queued for retry
+INFO  Webhook delivered successfully on retry attempt 1
+INFO  Tenant "initech" storage quota increased to 500 GB
+WARN  Tenant "initech" approaching storage quota, 92 percent used
+ERROR Upload rejected for tenant initech: storage quota exceeded
+INFO  Tenant initech purchased additional storage, quota now 1 TB
+DEBUG Rate limiter allowed burst of 150 requests for client key ck_9931
+INFO  Nightly reconciliation job started for financial ledger
+INFO  Nightly reconciliation job completed with zero discrepancies
+WARN  Reconciliation job took longer than usual: 18 minutes
+ERROR Failed to acquire distributed lock for job "generate-invoices"
+INFO  Lock acquired on retry, invoice generation proceeding
+INFO  Generated 4821 invoices for the current billing cycle
+DEBUG Invoice PDF rendering averaged 340ms per document
+INFO  User erin invited teammate frank to workspace "acme-eng"
+INFO  User frank accepted workspace invitation
+WARN  Workspace "acme-eng" approaching seat limit, 48 of 50 seats used
+INFO  Workspace "acme-eng" upgraded to the enterprise plan
+ERROR Third-party geolocation lookup failed for IP 203.0.113.42
+WARN  Falling back to default region for unresolved geolocation lookups
+INFO  Geolocation provider status restored, resuming normal lookups
+DEBUG Startup sequence completed in 3.4 seconds
+INFO  Shutting down gracefully, waiting for in-flight requests to finish
+INFO  All in-flight requests completed, shutdown proceeding
+INFO  Application server stopped
