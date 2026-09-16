@@ -2,7 +2,7 @@
 
 Only SQL and row<->object translation live here -- no business rules (offset
 validation, size limits, binary detection all belong to the service layer)
-and no HTTP awareness (raises app.errors.FileNotFound, never HTTPException).
+and no HTTP awareness (raises app.core.exceptions.FileNotFound, never HTTPException).
 Swapping SQLite for Postgres later means changing this file and
 app/infra/db.py; the service layer that calls it should not need to change.
 """
@@ -10,8 +10,8 @@ app/infra/db.py; the service layer that calls it should not need to change.
 import time
 from dataclasses import dataclass
 
-from ..errors import FileNotFound
-from ..infra import db
+from ..core.exceptions import FileNotFound
+from ..db import db
 
 
 @dataclass(frozen=True)

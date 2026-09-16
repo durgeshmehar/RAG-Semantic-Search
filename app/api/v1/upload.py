@@ -3,28 +3,29 @@
 Handlers only parse the request, call the service layer, and shape the
 response -- every rule (offset validation, size limits, binary detection,
 state transitions) lives in app/services/upload_service.py. Domain errors
-raised there (app/errors.py) are translated to HTTP responses by the
+raised there (app/core/exceptions.py) are translated to HTTP responses by the
 exception handlers registered in app/main.py, not here.
 
-Every route requires an X-User-Id header (see app/core/identity.py) and scopes
-reads/writes to that caller -- one user cannot see, search, or delete another
-user's files.
+Every route requires an X-User-Id header (see app/pipeline/identity.py) and
+scopes reads/writes to that caller -- one user cannot see, search, or delete
+another user's files.
 """
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from .. import models
-from ..core.identity import get_user_id
-from ..infra import config
-from ..repositories.file_repository import FileRecord
-from ..services import upload_service
+from ...core import config
+from ...repositories.file_repository import FileRecord
+from ...schemas import upload as schemas
+from ...schemas.common import ErrorResponse
+from ...services import upload_service
+from ..deps import get_user_id
 
 router = APIRouter(tags=["uploads"])
 
 
-def _to_status(record: FileRecord) -> models.FileStatus:
+def _to_status(record: FileRecord) -> schemas.FileStatus:
     settled = record.chunks_indexed + record.chunks_failed
-    return models.FileStatus(
+    return schemas.FileStatus(
         file_id=record.file_id,
         owner_id=record.owner_id,
         filename=record.filename,
@@ -52,17 +53,17 @@ def _to_status(record: FileRecord) -> models.FileStatus:
 
 @router.post(
     "/files",
-    response_model=models.CreateUploadResponse,
+    response_model=schemas.CreateUploadResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new upload",
 )
 def create_upload(
-    payload: models.CreateUploadRequest,
+    payload: schemas.CreateUploadRequest,
     user_id: str = Depends(get_user_id),
-) -> models.CreateUploadResponse:
+) -> schemas.CreateUploadResponse:
     """Reserve a file_id. Send the bytes with PUT /files/{file_id}/chunk."""
     file_id = upload_service.create_upload(user_id, payload.filename, payload.total_size)
-    return models.CreateUploadResponse(
+    return schemas.CreateUploadResponse(
         file_id=file_id,
         filename=payload.filename,
         total_size=payload.total_size,
@@ -73,18 +74,18 @@ def create_upload(
 
 @router.put(
     "/files/{file_id}/chunk",
-    response_model=models.ChunkUploadResponse,
+    response_model=schemas.ChunkUploadResponse,
     summary="Upload one chunk at a byte offset",
     responses={
-        404: {"model": models.ErrorResponse, "description": "Unknown file"},
-        409: {"model": models.ErrorResponse, "description": "Offset mismatch"},
-        413: {"model": models.ErrorResponse, "description": "Chunk too large"},
+        404: {"model": ErrorResponse, "description": "Unknown file"},
+        409: {"model": ErrorResponse, "description": "Offset mismatch"},
+        413: {"model": ErrorResponse, "description": "Chunk too large"},
         415: {
-            "model": models.ErrorResponse,
+            "model": ErrorResponse,
             "description": "Content looks like binary, not text",
         },
         503: {
-            "model": models.ErrorResponse,
+            "model": ErrorResponse,
             "description": "Too many uploads in progress; retry shortly",
         },
     },
@@ -99,7 +100,7 @@ async def upload_chunk(
         "current bytes_received.",
     ),
     user_id: str = Depends(get_user_id),
-) -> models.ChunkUploadResponse:
+) -> schemas.ChunkUploadResponse:
     """Append one chunk.
 
     A fixed number of concurrent chunk uploads may hold their body in memory
@@ -122,7 +123,7 @@ async def upload_chunk(
         body = await request.body()
         record = upload_service.append_chunk(file_id, user_id, offset, body)
 
-    return models.ChunkUploadResponse(
+    return schemas.ChunkUploadResponse(
         file_id=file_id,
         bytes_received=record.bytes_received,
         total_size=record.total_size,
@@ -133,14 +134,14 @@ async def upload_chunk(
 
 @router.post(
     "/files/{file_id}/complete",
-    response_model=models.FileStatus,
+    response_model=schemas.FileStatus,
     summary="Mark an upload finished",
     responses={
-        404: {"model": models.ErrorResponse, "description": "Unknown file"},
-        409: {"model": models.ErrorResponse, "description": "No bytes received yet"},
+        404: {"model": ErrorResponse, "description": "Unknown file"},
+        409: {"model": ErrorResponse, "description": "No bytes received yet"},
     },
 )
-def complete_upload(file_id: str, user_id: str = Depends(get_user_id)) -> models.FileStatus:
+def complete_upload(file_id: str, user_id: str = Depends(get_user_id)) -> schemas.FileStatus:
     """Finalize the upload once the client has sent every chunk.
 
     This, not a byte count, is what marks the upload done -- see
@@ -153,10 +154,10 @@ def complete_upload(file_id: str, user_id: str = Depends(get_user_id)) -> models
 
 @router.get(
     "/files/{file_id}/status",
-    response_model=models.FileStatus,
+    response_model=schemas.FileStatus,
     summary="Upload and processing progress",
 )
-def get_status(file_id: str, user_id: str = Depends(get_user_id)) -> models.FileStatus:
+def get_status(file_id: str, user_id: str = Depends(get_user_id)) -> schemas.FileStatus:
     """Report both states. Also doubles as the resume endpoint: send the next
     chunk from `bytes_received`."""
     record = upload_service.get_status(file_id, user_id)
@@ -165,16 +166,16 @@ def get_status(file_id: str, user_id: str = Depends(get_user_id)) -> models.File
 
 @router.get(
     "/files",
-    response_model=models.FileListResponse,
+    response_model=schemas.FileListResponse,
     summary="List your uploads",
 )
 def list_files(
     limit: int = Query(default=100, ge=1, le=1000),
     user_id: str = Depends(get_user_id),
-) -> models.FileListResponse:
+) -> schemas.FileListResponse:
     """Files owned by the caller, not every file on the service."""
     records = upload_service.list_uploads(user_id, limit)
-    return models.FileListResponse(files=[_to_status(r) for r in records])
+    return schemas.FileListResponse(files=[_to_status(r) for r in records])
 
 
 @router.delete(

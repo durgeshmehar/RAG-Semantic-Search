@@ -12,7 +12,8 @@ more threads add memory without adding much throughput.
 import logging
 import threading
 
-from ..infra import config, db
+from ..core import config
+from ..db import db
 from . import embeddings, job_queue, storage, vector_store
 
 logger = logging.getLogger(__name__)

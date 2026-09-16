@@ -6,9 +6,9 @@ point payload, so this never joins back to SQLite to locate a hit -- only to
 confirm the file exists and is owned by the caller.
 """
 
-from ..core import embeddings, storage, vector_store
-from ..errors import NothingIndexedYet
-from ..infra import db
+from ..core.exceptions import NothingIndexedYet
+from ..db import db
+from ..pipeline import embeddings, storage, vector_store
 from ..repositories import file_repository
 
 

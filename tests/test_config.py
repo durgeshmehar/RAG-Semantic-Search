@@ -10,7 +10,7 @@ QUANTIZATION_ALWAYS_RAM) rather than an in-process index file; the sizing math
 itself -- passages per byte, bytes per vector -- is unchanged by that choice.
 """
 
-from app.infra import config
+from app.core import config
 
 
 def index_bytes(total_size: int) -> int:

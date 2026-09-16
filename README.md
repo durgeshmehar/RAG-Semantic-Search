@@ -29,20 +29,22 @@ uvicorn app.main:app
 
 ### Try it
 
-Every request carries `X-User-Id` (any string), which scopes files to their creator.
+Every route lives under `/api/v1`. Every request carries `X-User-Id` (any string), which scopes
+files to their creator.
 
 ```bash
 printf 'INFO Starting server\nERROR Connection to database failed after 30 seconds.\nINFO Ready\n' > sample.log
 H='-H X-User-Id:demo -H Content-Type:application/json'
+API=http://localhost:8000/api/v1
 
-FILE_ID=$(curl -s -X POST http://localhost:8000/files $H \
+FILE_ID=$(curl -s -X POST $API/files $H \
   -d "{\"filename\":\"sample.log\",\"total_size\":$(wc -c < sample.log)}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["file_id"])')
 
-curl -s -X PUT "http://localhost:8000/files/$FILE_ID/chunk?offset=0" -H 'X-User-Id: demo' --data-binary @sample.log
-curl -s -X POST "http://localhost:8000/files/$FILE_ID/complete" -H 'X-User-Id: demo'
-curl -s "http://localhost:8000/files/$FILE_ID/status" -H 'X-User-Id: demo'
-curl -s -X POST "http://localhost:8000/files/$FILE_ID/search" $H \
+curl -s -X PUT "$API/files/$FILE_ID/chunk?offset=0" -H 'X-User-Id: demo' --data-binary @sample.log
+curl -s -X POST "$API/files/$FILE_ID/complete" -H 'X-User-Id: demo'
+curl -s "$API/files/$FILE_ID/status" -H 'X-User-Id: demo'
+curl -s -X POST "$API/files/$FILE_ID/search" $H \
   -d '{"query":"database connectivity problems","top_k":3}'
 ```
 
@@ -116,14 +118,14 @@ requires `X-User-Id`; a file owned by someone else 404s.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/files` | Register an upload → `file_id` |
-| `PUT` | `/files/{file_id}/chunk?offset=N` | Upload one chunk (raw body) |
-| `POST` | `/files/{file_id}/complete` | Mark the upload finished |
-| `GET` | `/files/{file_id}/status` | Upload **and** processing progress; also the resume endpoint |
-| `POST` | `/files/{file_id}/search` | Natural-language search |
-| `GET` | `/files` | List your uploads |
-| `DELETE` | `/files/{file_id}` | Delete a file and its index |
-| `GET` | `/health` | Liveness, workers, queue depth, Qdrant connectivity |
+| `POST` | `/api/v1/files` | Register an upload → `file_id` |
+| `PUT` | `/api/v1/files/{file_id}/chunk?offset=N` | Upload one chunk (raw body) |
+| `POST` | `/api/v1/files/{file_id}/complete` | Mark the upload finished |
+| `GET` | `/api/v1/files/{file_id}/status` | Upload **and** processing progress; also the resume endpoint |
+| `POST` | `/api/v1/files/{file_id}/search` | Natural-language search |
+| `GET` | `/api/v1/files` | List your uploads |
+| `DELETE` | `/api/v1/files/{file_id}` | Delete a file and its index |
+| `GET` | `/health` | Liveness, workers, queue depth, Qdrant connectivity (unversioned — hit by infra tooling, not API clients) |
 
 `PUT /chunk`: `offset` must equal `bytes_received`. `409` on mismatch (names the correct offset),
 `413` over the chunk size limit, `400` only past the hard `MAX_FILE_BYTES` ceiling — the client's
@@ -175,7 +177,7 @@ Nothing bounds concurrent embedding beyond the fixed worker count, but chunk *ac
 equivalent ceiling — an unbounded burst of concurrent `PUT /chunk` requests, each holding up to
 `MAX_CHUNK_BYTES` in memory, could add up past the API container's limit with nothing pushing back,
 and a container OOM-kill takes down every in-flight request, not just the excess ones.
-`MAX_CONCURRENT_UPLOADS` (default 50, see [app/core/upload_limiter.py](app/core/upload_limiter.py)) caps
+`MAX_CONCURRENT_UPLOADS` (default 50, see [app/pipeline/upload_limiter.py](app/pipeline/upload_limiter.py)) caps
 this the same way `WORKER_COUNT` caps embedding: past the limit, a chunk PUT gets `503` with
 `Retry-After` immediately, rather than being queued or silently slowing the container down.
 
@@ -254,47 +256,56 @@ a boundary isn't embedded as two meaningless fragments.
 ## Project layout
 
 Layered by role, with a one-way dependency direction:
-`routers → services → repositories → infra`, and `core` (reusable domain utilities
-that aren't tied to any one endpoint) reachable from both routers and services.
+`api → services → repositories → db`, and `core` / `pipeline` (settings, exceptions, and
+reusable domain utilities that aren't tied to any one endpoint) reachable from every layer above.
 
 ```
 app/
-├── main.py          # FastAPI app assembly, lifespan, exception handlers, OpenAPI
-├── models.py        # Pydantic schemas (request/response shapes)
-├── errors.py        # Domain exceptions -- no FastAPI import, no HTTP knowledge
-├── routers/         # HTTP layer only: parse request, call a service, shape response
-├── services/        # Business rules and orchestration -- no SQL, no HTTPException
-├── repositories/    # SQL only -- no business rules, raises app.errors, not HTTPException
-├── core/            # Reusable domain logic: the upload/index/search pipeline
-└── infra/           # Cross-cutting infrastructure, no domain knowledge
+├── main.py            # FastAPI app assembly, lifespan, exception handlers, OpenAPI
+├── schemas/           # Pydantic request/response shapes
+├── api/
+│   ├── deps.py         # shared Depends(): get_user_id, acquire_upload_slot
+│   └── v1/             # HTTP layer only: parse request, call a service, shape response
+│       ├── router.py    # aggregates every v1 route
+│       ├── upload.py
+│       └── search.py
+├── services/           # Business rules and orchestration -- no SQL, no HTTPException
+├── repositories/       # SQL only -- no business rules, raises app.core.exceptions
+├── pipeline/           # Reusable domain logic: the upload/index/search pipeline
+├── core/               # config.py + exceptions.py -- cross-cutting, no domain knowledge
+└── db/                 # SQLite connection, schema, transactions
 ```
 
-A router never touches SQL or raises `HTTPException` for a domain reason: it calls a service,
-and any `app.errors.DomainError` the service raises is translated to the right status code by
-one exception handler per error type in [app/main.py](app/main.py) — the mapping lives in exactly
-one place rather than being repeated at every raise site. Services call repositories for
-persistence and `core` modules for domain utilities (chunking, embedding, the vector store); they
-never import FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be
-called and tested with no HTTP framework involved.
+A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
+service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
+status code by one exception handler per error type in [app/main.py](app/main.py) — the mapping
+lives in exactly one place rather than being repeated at every raise site. Services call
+repositories for persistence and `pipeline` modules for domain utilities (chunking, embedding, the
+vector store); they never import FastAPI, so `upload_service.append_chunk()` or
+`search_service.search()` can be called and tested with no HTTP framework involved.
+
+Every route is mounted under `/api/v1` — the directory is a real version boundary, not just a
+naming convention, so a future v2 can be added as a sibling package without touching v1's code.
 
 | Module | Responsibility |
 |---|---|
-| [app/errors.py](app/errors.py) | Domain exceptions, one per failure case |
-| [app/routers/upload.py](app/routers/upload.py) | Parse the request, call `upload_service`, shape the response |
-| [app/routers/search.py](app/routers/search.py) | Parse the request, call `search_service`, shape the response |
+| [app/core/exceptions.py](app/core/exceptions.py) | Domain exceptions, one per failure case |
+| [app/core/config.py](app/core/config.py) | Environment-driven settings |
+| [app/api/deps.py](app/api/deps.py) | Shared dependencies: identity, the upload-slot limiter |
+| [app/api/v1/upload.py](app/api/v1/upload.py) | Parse the request, call `upload_service`, shape the response |
+| [app/api/v1/search.py](app/api/v1/search.py) | Parse the request, call `search_service`, shape the response |
 | [app/services/upload_service.py](app/services/upload_service.py) | Offset validation, size limits, binary detection, state transitions |
 | [app/services/search_service.py](app/services/search_service.py) | Embed the query, ask the vector store, resolve hits to text |
 | [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
-| [app/core/upload_limiter.py](app/core/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
-| [app/core/text_detection.py](app/core/text_detection.py) | Detects non-text (binary) content |
-| [app/core/identity.py](app/core/identity.py) | `X-User-Id` → caller id, for ownership scoping |
-| [app/core/line_buffer.py](app/core/line_buffer.py) | Bytes → line-aligned passage ranges |
-| [app/core/job_queue.py](app/core/job_queue.py) | Durable queue: claim/complete/fail/recover |
-| [app/core/worker.py](app/core/worker.py) | Background embedding threads |
-| [app/core/vector_store.py](app/core/vector_store.py) | Per-file Qdrant collection, idempotent upserts |
-| [app/core/storage.py](app/core/storage.py) | On-disk layout, atomic finalize, range reads |
-| [app/infra/db.py](app/infra/db.py) | SQLite connection, schema, transactions |
-| [app/infra/config.py](app/infra/config.py) | Environment-driven settings |
+| [app/pipeline/upload_limiter.py](app/pipeline/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
+| [app/pipeline/text_detection.py](app/pipeline/text_detection.py) | Detects non-text (binary) content |
+| [app/pipeline/identity.py](app/pipeline/identity.py) | `X-User-Id` → caller id, for ownership scoping |
+| [app/pipeline/line_buffer.py](app/pipeline/line_buffer.py) | Bytes → line-aligned passage ranges |
+| [app/pipeline/job_queue.py](app/pipeline/job_queue.py) | Durable queue: claim/complete/fail/recover |
+| [app/pipeline/worker.py](app/pipeline/worker.py) | Background embedding threads |
+| [app/pipeline/vector_store.py](app/pipeline/vector_store.py) | Per-file Qdrant collection, idempotent upserts |
+| [app/pipeline/storage.py](app/pipeline/storage.py) | On-disk layout, atomic finalize, range reads |
+| [app/db/db.py](app/db/db.py) | SQLite connection, schema, transactions |
 
 ---
 
@@ -332,7 +343,7 @@ chunk uploads resulted in exactly 3 accepted and 5 rejected with `503`/`Retry-Af
   is the better trade past a few thousand files.
 - **Text files only**, no PDF/DOCX extraction — a binary upload's first chunk is checked for null
   bytes and invalid UTF-8 and rejected with `415` before anything is written or indexed
-  ([app/core/text_detection.py](app/core/text_detection.py)), rather than silently indexing decode-noise.
+  ([app/pipeline/text_detection.py](app/pipeline/text_detection.py)), rather than silently indexing decode-noise.
 - **Identity, not authentication** — `X-User-Id` is trusted as given; a real deployment would put an
   auth layer in front of it.
 - **Startup crash-recovery assumes one process** — safe because it runs before the server accepts

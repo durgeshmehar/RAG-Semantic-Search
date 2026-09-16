@@ -33,7 +33,7 @@ import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
-from ..infra import config
+from ..core import config
 
 logger = logging.getLogger(__name__)
 

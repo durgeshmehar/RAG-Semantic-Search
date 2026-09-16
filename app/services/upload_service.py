@@ -1,20 +1,19 @@
 """Business rules for creating, appending to, completing, and deleting uploads.
 
-Every rule that used to live inline in app/routers/upload.py is here instead:
+Every rule that used to live inline in app/api/v1/upload.py is here instead:
 offset validation, size limits, binary-content rejection, the disk/DB
 reconciliation on a resumed upload, and the state transitions an upload moves
 through. Routers call these functions and translate the exceptions raised
-(app/errors.py) into HTTP responses; nothing here imports FastAPI or raises
-HTTPException, so these rules are callable and testable with no HTTP
+(app/core/exceptions.py) into HTTP responses; nothing here imports FastAPI or
+raises HTTPException, so these rules are callable and testable with no HTTP
 framework involved.
 """
 
 import time
 import uuid
 
-from ..core import job_queue, storage, text_detection, upload_limiter, vector_store
-from ..core.line_buffer import LineBuffer
-from ..errors import (
+from ..core import config
+from ..core.exceptions import (
     ChunkTooLarge,
     FileTooLarge,
     NoBytesReceivedYet,
@@ -22,7 +21,9 @@ from ..errors import (
     OffsetMismatch,
     UploadAlreadyDone,
 )
-from ..infra import config, db
+from ..db import db
+from ..pipeline import job_queue, storage, text_detection, upload_limiter, vector_store
+from ..pipeline.line_buffer import LineBuffer
 from ..repositories import file_repository
 from ..repositories.file_repository import FileRecord
 

@@ -12,8 +12,9 @@ from fastapi import FastAPI, Request, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
-from .core import job_queue, vector_store, worker
-from .errors import (
+from .api.v1.router import router as v1_router
+from .core import config
+from .core.exceptions import (
     ChunkTooLarge,
     FileNotFound,
     FileTooLarge,
@@ -24,8 +25,8 @@ from .errors import (
     TooManyConcurrentUploads,
     UploadAlreadyDone,
 )
-from .infra import config, db
-from .routers import search, upload
+from .db import db
+from .pipeline import job_queue, vector_store, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,13 +79,13 @@ app = FastAPI(
         "delete only see files created under the same `X-User-Id`. Click "
         "**Authorize** below and set it once to have it applied to every "
         "request tried from this page.\n\n"
-        "**Upload flow**\n"
-        "1. `POST /files` to register the upload and get a `file_id`.\n"
-        "2. `PUT /files/{file_id}/chunk?offset=N` repeatedly with raw chunk bodies.\n"
-        "3. `POST /files/{file_id}/complete` once every chunk has been sent.\n"
-        "4. `GET /files/{file_id}/status` to watch progress -- or, after an "
+        "**Upload flow** (every path below is under `/api/v1`)\n"
+        "1. `POST /api/v1/files` to register the upload and get a `file_id`.\n"
+        "2. `PUT /api/v1/files/{file_id}/chunk?offset=N` repeatedly with raw chunk bodies.\n"
+        "3. `POST /api/v1/files/{file_id}/complete` once every chunk has been sent.\n"
+        "4. `GET /api/v1/files/{file_id}/status` to watch progress -- or, after an "
         "interruption, to learn the offset to resume from.\n"
-        "5. `POST /files/{file_id}/search` once `searchable` is true.\n\n"
+        "5. `POST /api/v1/files/{file_id}/search` once `searchable` is true.\n\n"
         "Indexing runs during the upload, so passages become searchable before "
         "`complete` is even called."
     ),
@@ -94,11 +95,10 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
-app.include_router(upload.router)
-app.include_router(search.router)
+app.include_router(v1_router, prefix="/api/v1")
 
 
-# Domain exceptions (app/errors.py) are raised by the service layer with no
+# Domain exceptions (app/core/exceptions.py) are raised by the service layer with no
 # knowledge of HTTP; this is the single place that maps each one to a status
 # code and response body, instead of every raise site in every router
 # constructing its own HTTPException.
@@ -165,8 +165,8 @@ def _custom_openapi() -> dict:
     applied to every route gives Swagger one Authorize dialog that then
     auto-fills the header on every request tried from the page.
 
-    PUT /files/{file_id}/chunk reads its body via the raw Request rather than
-    a typed parameter (see app/routers/upload.py's upload_chunk docstring for why:
+    PUT /api/v1/files/{file_id}/chunk reads its body via the raw Request rather
+    than a typed parameter (see app/api/v1/upload.py's upload_chunk docstring for why:
     FastAPI 0.115's Body(media_type=...) 422s on real clients' differing
     default Content-Type headers). A raw Request is invisible to FastAPI's
     schema generator, so without this, Swagger's "Try it out" for that
@@ -195,7 +195,7 @@ def _custom_openapi() -> dict:
         for operation in path.values():
             operation.setdefault("security", []).append({"UserId": []})
 
-    schema["paths"]["/files/{file_id}/chunk"]["put"]["requestBody"] = {
+    schema["paths"]["/api/v1/files/{file_id}/chunk"]["put"]["requestBody"] = {
         "required": True,
         "content": {
             "application/octet-stream": {

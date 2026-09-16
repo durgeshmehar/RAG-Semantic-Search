@@ -18,8 +18,8 @@ a silent slowdown.
 
 import threading
 
-from ..errors import TooManyConcurrentUploads
-from ..infra import config
+from ..core import config
+from ..core.exceptions import TooManyConcurrentUploads
 
 _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 
@@ -28,9 +28,9 @@ _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 RETRY_AFTER_SECONDS = 2
 
 # Re-exported so existing call sites (`except upload_limiter.TooManyConcurrentUploads`)
-# keep working; the actual type lives in app/errors.py alongside every other
-# domain exception, so app/main.py's exception handlers can catch it there
-# without importing this module.
+# keep working; the actual type lives in app/core/exceptions.py alongside
+# every other domain exception, so app/main.py's exception handlers can catch
+# it there without importing this module.
 __all__ = ["acquire", "TooManyConcurrentUploads", "RETRY_AFTER_SECONDS"]
 
 

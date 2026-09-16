@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from app.core import upload_limiter
+from app.pipeline import upload_limiter
 
 
 @pytest.fixture(autouse=True)

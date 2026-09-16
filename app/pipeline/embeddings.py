@@ -11,7 +11,7 @@ import threading
 
 import numpy as np
 
-from ..infra import config
+from ..core import config
 
 _model = None
 _model_lock = threading.Lock()

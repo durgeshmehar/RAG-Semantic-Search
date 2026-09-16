@@ -17,6 +17,11 @@ from pathlib import Path
 
 import pytest
 
+# Every route lives under this prefix (see app/main.py). Defined once so a
+# future version bump or prefix change is a one-line edit here, not a
+# find-and-replace across every test.
+API = "/api/v1"
+
 
 @pytest.fixture
 def isolated_env(monkeypatch):
@@ -24,8 +29,9 @@ def isolated_env(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
 
-        from app.core import vector_store
-        from app.infra import config, db
+        from app.core import config
+        from app.db import db
+        from app.pipeline import vector_store
 
         monkeypatch.setattr(config, "DATA_DIR", root)
         monkeypatch.setattr(config, "UPLOAD_DIR", root / "uploads")
@@ -53,7 +59,7 @@ def _drop_test_collections() -> None:
     collections never collide across tests -- but leaving hundreds of
     empty-ish Qdrant collections around after a full test run is untidy.
     """
-    from app.core import vector_store
+    from app.pipeline import vector_store
 
     try:
         client = vector_store.get_client()
@@ -76,7 +82,7 @@ def client(isolated_env, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import main
-    from app.core import worker
+    from app.pipeline import worker
 
     monkeypatch.setattr(worker, "start_workers", lambda: None)
     monkeypatch.setattr(worker, "stop_workers", lambda: None)
@@ -113,7 +119,7 @@ def sample_text() -> bytes:
 def upload_file(client, data: bytes, filename: str = "test.log", chunk_size: int = 4096) -> str:
     """Upload bytes in chunks, complete the upload, and return the file_id."""
     response = client.post(
-        "/files", json={"filename": filename, "total_size": len(data)}
+        f"{API}/files", json={"filename": filename, "total_size": len(data)}
     )
     assert response.status_code == 201, response.text
     file_id = response.json()["file_id"]
@@ -122,14 +128,14 @@ def upload_file(client, data: bytes, filename: str = "test.log", chunk_size: int
     while offset < len(data):
         piece = data[offset : offset + chunk_size]
         response = client.put(
-            f"/files/{file_id}/chunk",
+            f"{API}/files/{file_id}/chunk",
             params={"offset": offset},
             content=piece,
         )
         assert response.status_code == 200, response.text
         offset += len(piece)
 
-    response = client.post(f"/files/{file_id}/complete")
+    response = client.post(f"{API}/files/{file_id}/complete")
     assert response.status_code == 200, response.text
 
     return file_id

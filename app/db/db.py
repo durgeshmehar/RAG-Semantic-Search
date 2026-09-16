@@ -2,8 +2,8 @@
 
 SQLite plays two roles here: it stores file/chunk metadata, and the `chunks`
 table doubles as the durable job queue that feeds the indexing workers (see
-app/core/job_queue.py). WAL mode is what makes that work -- the upload path can
-write while workers read, without blocking each other.
+app/pipeline/job_queue.py). WAL mode is what makes that work -- the upload path
+can write while workers read, without blocking each other.
 
 Note what `chunks` does NOT store: the passage text. Chunks hold byte offsets
 into the uploaded file, which is already on disk and immutable once written.
@@ -15,7 +15,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-from . import config
+from ..core import config
 
 # SQLite connections can't be shared across threads, and this service has
 # several (the request path plus a worker pool). Each thread gets its own.
@@ -25,7 +25,7 @@ _local = threading.local()
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     file_id            TEXT PRIMARY KEY,
-    -- Client-supplied via X-User-Id (see app/core/identity.py). Not authenticated --
+    -- Client-supplied via X-User-Id (see app/pipeline/identity.py). Not authenticated --
     -- there is no login -- but it scopes listing/search/delete so one user
     -- can't act on another's files, and it is what a real auth layer would
     -- slot into later without changing this schema.

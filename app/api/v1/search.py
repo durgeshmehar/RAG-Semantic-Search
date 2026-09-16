@@ -7,27 +7,28 @@ byte ranges to text) lives in app/services/search_service.py.
 
 from fastapi import APIRouter, Depends
 
-from .. import models
-from ..core.identity import get_user_id
-from ..services import search_service
+from ...schemas import search as schemas
+from ...schemas.common import ErrorResponse
+from ...services import search_service
+from ..deps import get_user_id
 
 router = APIRouter(tags=["search"])
 
 
 @router.post(
     "/files/{file_id}/search",
-    response_model=models.SearchResponse,
+    response_model=schemas.SearchResponse,
     summary="Search a file in natural language",
     responses={
-        404: {"model": models.ErrorResponse, "description": "Unknown file"},
-        409: {"model": models.ErrorResponse, "description": "Nothing indexed yet"},
+        404: {"model": ErrorResponse, "description": "Unknown file"},
+        409: {"model": ErrorResponse, "description": "Nothing indexed yet"},
     },
 )
 def search_file(
     file_id: str,
-    payload: models.SearchRequest,
+    payload: schemas.SearchRequest,
     user_id: str = Depends(get_user_id),
-) -> models.SearchResponse:
+) -> schemas.SearchResponse:
     """Return the sections whose meaning is closest to the query.
 
     Searching is allowed while the upload is still in progress -- whatever has
@@ -35,12 +36,12 @@ def search_file(
     """
     hits = search_service.search(file_id, user_id, payload.query, payload.top_k)
 
-    return models.SearchResponse(
+    return schemas.SearchResponse(
         file_id=file_id,
         query=payload.query,
         total_hits=len(hits),
         results=[
-            models.SearchHit(
+            schemas.SearchHit(
                 text=h.text,
                 start_byte=h.start_byte,
                 end_byte=h.end_byte,
