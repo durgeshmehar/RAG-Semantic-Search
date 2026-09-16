@@ -28,8 +28,9 @@ class IngestedPassage:
     """One passage's coordinates paired with its already-read text.
 
     The caller (app/tasks/worker.py) reads the text from disk via
-    app/storage.py before calling ingest_batch -- this module never touches
-    the filesystem, only the embedding model and the vector store.
+    app/core/helper/storage.py before calling ingest_batch -- this module
+    never touches the filesystem, only the embedding model and the vector
+    store.
     """
 
     sequence: int

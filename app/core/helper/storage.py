@@ -8,12 +8,18 @@ That final file is also the text store: chunk rows hold byte offsets into it,
 and search reads passages back with seek()+read rather than keeping a second
 copy of the corpus in the database.
 
-Vector storage lives in Qdrant (see vector_store.py), not on this filesystem.
+Vector storage lives in Qdrant (see app/repositories/vector_repository.py),
+not on this filesystem.
+
+Lives under core/helper rather than services or tasks because it's a plain
+disk-IO utility with no business rules, shared by services/upload_service.py,
+services/search_service.py, and tasks/worker.py alike -- not owned by any one
+of them.
 """
 
 from pathlib import Path
 
-from .core import config
+from .. import config
 
 
 def partial_path(file_id: str) -> Path:

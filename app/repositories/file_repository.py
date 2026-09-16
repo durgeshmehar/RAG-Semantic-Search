@@ -4,7 +4,7 @@ Only SQL and row<->object translation live here -- no business rules (offset
 validation, size limits, binary detection all belong to the service layer)
 and no HTTP awareness (raises app.core.exceptions.FileNotFound, never HTTPException).
 Swapping SQLite for Postgres later means changing this file and
-app/infra/db.py; the service layer that calls it should not need to change.
+app/db/db.py; the service layer that calls it should not need to change.
 """
 
 import time
@@ -148,5 +148,92 @@ def mark_completed(conn, file_id: str) -> None:
 
 
 def delete(conn, file_id: str) -> None:
+    """Delete this file's row and its chunk rows.
+
+    The `chunks` DELETE belongs to chunk_repository by table, but a foreign key
+    (ON DELETE CASCADE, see app/db/db.py) already drops them the instant the
+    files row goes -- this explicit statement is redundant defense, not a
+    second source of truth, so it stays inline rather than importing sideways.
+    """
     conn.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
     conn.execute("DELETE FROM files WHERE file_id = ?", (file_id,))
+
+
+def mark_processing_started(conn, file_id: str, now: float) -> None:
+    """First claim of the file's queue -- flip processing_status off 'pending'."""
+    conn.execute(
+        """
+        UPDATE files
+           SET processing_status = CASE
+                   WHEN processing_status = 'pending' THEN 'processing'
+                   ELSE processing_status
+               END,
+               updated_at = ?
+         WHERE file_id = ?
+        """,
+        (now, file_id),
+    )
+
+
+def record_indexed(conn, file_id: str, *, count: int, watermark: int, now: float) -> None:
+    conn.execute(
+        """
+        UPDATE files
+           SET chunks_indexed = chunks_indexed + ?,
+               indexed_watermark = MAX(indexed_watermark, ?),
+               updated_at = ?
+         WHERE file_id = ?
+        """,
+        (count, watermark, now, file_id),
+    )
+
+
+def record_failed(conn, file_id: str, *, count: int, error: str, now: float) -> None:
+    conn.execute(
+        """
+        UPDATE files
+           SET chunks_failed = chunks_failed + ?,
+               error_message = ?,
+               updated_at = ?
+         WHERE file_id = ?
+        """,
+        (count, error, now, file_id),
+    )
+
+
+def get_processing_progress(conn, file_id: str) -> tuple[str, int, int, int] | None:
+    """(upload_status, chunks_total, chunks_indexed, chunks_failed), or None if unknown."""
+    row = conn.execute(
+        """
+        SELECT upload_status, chunks_total, chunks_indexed, chunks_failed
+          FROM files
+         WHERE file_id = ?
+        """,
+        (file_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return (row["upload_status"], row["chunks_total"], row["chunks_indexed"], row["chunks_failed"])
+
+
+def set_processing_status(conn, file_id: str, status: str, now: float) -> None:
+    conn.execute(
+        "UPDATE files SET processing_status = ?, updated_at = ? WHERE file_id = ?",
+        (status, now, file_id),
+    )
+
+
+def mark_interrupted_uploads(conn, now: float) -> None:
+    """Uploads a crashed process left mid-flight -- no live connection is writing."""
+    conn.execute(
+        "UPDATE files SET upload_status = 'interrupted', updated_at = ? WHERE upload_status = 'uploading'",
+        (now,),
+    )
+
+
+def revert_stuck_finalizing(conn, now: float) -> None:
+    """A crash between 'finalizing' and the rename -- let the client retry /complete."""
+    conn.execute(
+        "UPDATE files SET upload_status = 'uploading', updated_at = ? WHERE upload_status = 'finalizing'",
+        (now,),
+    )

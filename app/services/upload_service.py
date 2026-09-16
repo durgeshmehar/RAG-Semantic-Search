@@ -22,8 +22,8 @@ import uuid
 
 from .upload import validators
 from .upload.concurrency import acquire as acquire_upload_slot
-from .. import storage
 from ..core import config
+from ..core.helper import storage
 from ..core.exceptions import (
     ChunkTooLarge,
     FileTooLarge,

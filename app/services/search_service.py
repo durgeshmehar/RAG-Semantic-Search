@@ -6,8 +6,8 @@ point payload, so this never joins back to SQLite to locate a hit -- only to
 confirm the file exists and is owned by the caller.
 """
 
-from .. import storage
 from ..core.exceptions import NothingIndexedYet
+from ..core.helper import storage
 from ..db import db
 from ..rag.ingestion import embedder
 from ..rag.retrieval import retriever

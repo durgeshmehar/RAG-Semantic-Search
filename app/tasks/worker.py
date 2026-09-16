@@ -22,8 +22,8 @@ module only owns claiming work, retrying failures, and the thread lifecycle.
 import logging
 import threading
 
-from .. import storage
 from ..core import config
+from ..core.helper import storage
 from ..db import db
 from ..rag.pipeline import IngestedPassage, ingest_batch
 from . import job_queue

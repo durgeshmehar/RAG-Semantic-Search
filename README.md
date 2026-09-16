@@ -262,7 +262,6 @@ below) reachable from the layers above.
 ```
 app/
 ├── main.py             # FastAPI app assembly, lifespan, exception handlers, OpenAPI
-├── storage.py           # on-disk layout, atomic finalize, byte-range reads
 ├── schemas/            # Pydantic request/response shapes
 ├── api/
 │   ├── deps.py          # shared Depends(): get_user_id, acquire_upload_slot
@@ -285,14 +284,17 @@ app/
 │   └── pipeline.py       # embed-and-store orchestration for one batch of passages
 ├── tasks/               # background job machinery (in-process threads, not Celery --
 │   │                    #   there is no message broker in this deployment)
-│   ├── job_queue.py      # durable queue: claim/complete/fail/recover
+│   ├── job_queue.py      # queue semantics: batching, retry policy, files<->chunks coordination
 │   └── worker.py         # the thread pool that drains it
-├── repositories/        # persistence only -- no business rules
-│   ├── file_repository.py    # SQL for the `files` table
-│   └── vector_repository.py  # Qdrant collection storage (the write/ownership side)
+├── repositories/        # persistence only -- no business rules, no queue semantics
+│   ├── file_repository.py     # SQL for the `files` table
+│   ├── chunk_repository.py    # SQL for the `chunks` table
+│   └── vector_repository.py   # Qdrant collection storage (the write/ownership side)
 ├── core/                # cross-cutting, no domain knowledge
 │   ├── config.py
-│   └── exceptions.py     # domain exceptions, one per failure case
+│   ├── exceptions.py     # domain exceptions, one per failure case
+│   └── helper/
+│       └── storage.py    # on-disk layout, atomic finalize, byte-range reads
 └── db/
     └── db.py             # SQLite connection, schema, transactions
 ```
@@ -302,13 +304,23 @@ glance; a service with too much supporting code (like `upload_service.py`'s vali
 concurrency cap) gets a same-named subfolder for those *extra* files, but the orchestrator itself
 never moves into it.
 
+`core/helper/storage.py` sits under `core/` rather than under any one service or task: it is a
+plain disk-IO utility with no business rules, shared as-is by `services/upload_service.py`,
+`services/search_service.py`, and `tasks/worker.py`, so it doesn't belong to any single one of them.
+
+Table SQL is split the same way for `files` and `chunks`: `repositories/file_repository.py` and
+`repositories/chunk_repository.py` hold only queries and row<->object translation, while
+`tasks/job_queue.py` owns the semantics on top -- batching a claim, deciding retry vs. failure, and
+keeping both tables consistent inside one transaction. Queue rows never carry passage text (see
+below), so this is metadata- and coordinate-only persistence, same as the `files` side.
+
 A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
 service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
 status code by one exception handler per error type in [app/main.py](app/main.py) — the mapping
 lives in exactly one place rather than being repeated at every raise site. Services call
-repositories for persistence and `rag`/`app.storage` for domain utilities; they never import
-FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and tested
-with no HTTP framework involved.
+repositories for persistence and `rag`/`core.helper.storage` for domain utilities; they never
+import FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and
+tested with no HTTP framework involved.
 
 **Why `rag/` and `tasks/` are separate from each other.** `rag/pipeline.py`'s `ingest_batch()` is a
 pure function — text and coordinates in, embedded vectors stored, no knowledge of retries or
@@ -339,11 +351,12 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | [app/rag/ingestion/embedder.py](app/rag/ingestion/embedder.py) | Text → vectors |
 | [app/rag/retrieval/retriever.py](app/rag/retrieval/retriever.py) | Nearest-neighbor search over a file's vectors |
 | [app/rag/pipeline.py](app/rag/pipeline.py) | Embed-and-store orchestration for one batch |
-| [app/tasks/job_queue.py](app/tasks/job_queue.py) | Durable queue: claim/complete/fail/recover |
+| [app/tasks/job_queue.py](app/tasks/job_queue.py) | Queue semantics: batching, retry policy, claim/complete/fail/recover |
 | [app/tasks/worker.py](app/tasks/worker.py) | Background thread pool draining the queue |
 | [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
+| [app/repositories/chunk_repository.py](app/repositories/chunk_repository.py) | SQL for the `chunks` table only |
 | [app/repositories/vector_repository.py](app/repositories/vector_repository.py) | Per-file Qdrant collection, idempotent upserts |
-| [app/storage.py](app/storage.py) | On-disk layout, atomic finalize, range reads |
+| [app/core/helper/storage.py](app/core/helper/storage.py) | On-disk layout, atomic finalize, range reads |
 | [app/db/db.py](app/db/db.py) | SQLite connection, schema, transactions |
 
 ---
