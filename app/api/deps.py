@@ -5,7 +5,7 @@ Anything injected via `Depends(...)` in more than one router lives here.
 
 from fastapi import Header
 
-from ..services.upload.upload_service import acquire_upload_slot
+from ..services.upload_service import acquire_upload_slot
 
 __all__ = ["get_user_id", "acquire_upload_slot"]
 

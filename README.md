@@ -29,13 +29,13 @@ uvicorn app.main:app
 
 ### Try it
 
-Every route lives under `/api/v1`. Every request carries `X-User-Id` (any string), which scopes
+Every route lives under `/v1`. Every request carries `X-User-Id` (any string), which scopes
 files to their creator.
 
 ```bash
 printf 'INFO Starting server\nERROR Connection to database failed after 30 seconds.\nINFO Ready\n' > sample.log
 H='-H X-User-Id:demo -H Content-Type:application/json'
-API=http://localhost:8000/api/v1
+API=http://localhost:8000/v1
 
 FILE_ID=$(curl -s -X POST $API/files $H \
   -d "{\"filename\":\"sample.log\",\"total_size\":$(wc -c < sample.log)}" \
@@ -118,13 +118,13 @@ requires `X-User-Id`; a file owned by someone else 404s.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/files` | Register an upload → `file_id` |
-| `PUT` | `/api/v1/files/{file_id}/chunk?offset=N` | Upload one chunk (raw body) |
-| `POST` | `/api/v1/files/{file_id}/complete` | Mark the upload finished |
-| `GET` | `/api/v1/files/{file_id}/status` | Upload **and** processing progress; also the resume endpoint |
-| `POST` | `/api/v1/files/{file_id}/search` | Natural-language search |
-| `GET` | `/api/v1/files` | List your uploads |
-| `DELETE` | `/api/v1/files/{file_id}` | Delete a file and its index |
+| `POST` | `/v1/files` | Register an upload → `file_id` |
+| `PUT` | `/v1/files/{file_id}/chunk?offset=N` | Upload one chunk (raw body) |
+| `POST` | `/v1/files/{file_id}/complete` | Mark the upload finished |
+| `GET` | `/v1/files/{file_id}/status` | Upload **and** processing progress; also the resume endpoint |
+| `POST` | `/v1/files/{file_id}/search` | Natural-language search |
+| `GET` | `/v1/files` | List your uploads |
+| `DELETE` | `/v1/files/{file_id}` | Delete a file and its index |
 | `GET` | `/health` | Liveness, workers, queue depth, Qdrant connectivity (unversioned — hit by infra tooling, not API clients) |
 
 `PUT /chunk`: `offset` must equal `bytes_received`. `409` on mismatch (names the correct offset),
@@ -256,12 +256,13 @@ a boundary isn't embedded as two meaningless fragments.
 ## Project layout
 
 Layered by role, with a one-way dependency direction: `api → services → repositories → db`, with
-`rag/`, `tasks/`, `pipeline/`, and `core/` (each a distinct kind of cross-cutting or domain concern,
-detailed below) reachable from the layers above.
+`rag/`, `tasks/`, and `core/` (each a distinct kind of cross-cutting or domain concern, detailed
+below) reachable from the layers above.
 
 ```
 app/
 ├── main.py             # FastAPI app assembly, lifespan, exception handlers, OpenAPI
+├── storage.py           # on-disk layout, atomic finalize, byte-range reads
 ├── schemas/            # Pydantic request/response shapes
 ├── api/
 │   ├── deps.py          # shared Depends(): get_user_id, acquire_upload_slot
@@ -270,9 +271,9 @@ app/
 │       ├── upload.py
 │       └── search.py
 ├── services/            # Business rules and orchestration -- no SQL, no HTTPException
+│   ├── upload_service.py     # orchestrator -- the only thing api/ imports for uploads
 │   ├── search_service.py
-│   └── upload/           # each file owns one upload-time responsibility
-│       ├── upload_service.py  # orchestrator -- the only thing api/ imports
+│   └── upload/                # upload_service's supporting files, not services in their own right
 │       ├── validators.py      # binary-content detection
 │       └── concurrency.py     # the concurrent-upload cap
 ├── rag/                 # the RAG pipeline: chunk -> embed -> store -> retrieve
@@ -289,8 +290,6 @@ app/
 ├── repositories/        # persistence only -- no business rules
 │   ├── file_repository.py    # SQL for the `files` table
 │   └── vector_repository.py  # Qdrant collection storage (the write/ownership side)
-├── pipeline/            # domain utilities not specific to RAG or background jobs
-│   └── storage.py        # on-disk layout, atomic finalize, byte-range reads
 ├── core/                # cross-cutting, no domain knowledge
 │   ├── config.py
 │   └── exceptions.py     # domain exceptions, one per failure case
@@ -298,11 +297,16 @@ app/
     └── db.py             # SQLite connection, schema, transactions
 ```
 
+Every service lives flat at the top of `services/`, so opening that folder shows every service at a
+glance; a service with too much supporting code (like `upload_service.py`'s validation and the
+concurrency cap) gets a same-named subfolder for those *extra* files, but the orchestrator itself
+never moves into it.
+
 A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
 service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
 status code by one exception handler per error type in [app/main.py](app/main.py) — the mapping
 lives in exactly one place rather than being repeated at every raise site. Services call
-repositories for persistence and `rag`/`pipeline` modules for domain utilities; they never import
+repositories for persistence and `rag`/`app.storage` for domain utilities; they never import
 FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and tested
 with no HTTP framework involved.
 
@@ -317,7 +321,7 @@ without requiring an actual message broker for a service meant to run locally.
 back, not an LLM-generated answer over them — retrieval returns the matched source passages
 directly. Adding a generation stage would require an LLM this service doesn't call.
 
-Every route is mounted under `/api/v1` — the directory is a real version boundary, not just a
+Every route is mounted under `/v1` — the directory is a real version boundary, not just a
 naming convention, so a future v2 can be added as a sibling package without touching v1's code.
 
 | Module | Responsibility |
@@ -327,7 +331,7 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | [app/api/deps.py](app/api/deps.py) | Shared dependencies: identity, the upload-slot limiter |
 | [app/api/v1/upload.py](app/api/v1/upload.py) | Parse the request, call `upload_service`, shape the response |
 | [app/api/v1/search.py](app/api/v1/search.py) | Parse the request, call `search_service`, shape the response |
-| [app/services/upload/upload_service.py](app/services/upload/upload_service.py) | Offset validation, size limits, state transitions |
+| [app/services/upload_service.py](app/services/upload_service.py) | Offset validation, size limits, state transitions |
 | [app/services/upload/validators.py](app/services/upload/validators.py) | Detects non-text (binary) content |
 | [app/services/upload/concurrency.py](app/services/upload/concurrency.py) | Caps concurrent chunk uploads held in memory |
 | [app/services/search_service.py](app/services/search_service.py) | Embed the query, ask the retriever, resolve hits to text |
@@ -339,7 +343,7 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | [app/tasks/worker.py](app/tasks/worker.py) | Background thread pool draining the queue |
 | [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
 | [app/repositories/vector_repository.py](app/repositories/vector_repository.py) | Per-file Qdrant collection, idempotent upserts |
-| [app/pipeline/storage.py](app/pipeline/storage.py) | On-disk layout, atomic finalize, range reads |
+| [app/storage.py](app/storage.py) | On-disk layout, atomic finalize, range reads |
 | [app/db/db.py](app/db/db.py) | SQLite connection, schema, transactions |
 
 ---

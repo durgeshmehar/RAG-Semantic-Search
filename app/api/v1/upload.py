@@ -6,9 +6,9 @@ state transitions) lives in app/services/upload_service.py. Domain errors
 raised there (app/core/exceptions.py) are translated to HTTP responses by the
 exception handlers registered in app/main.py, not here.
 
-Every route requires an X-User-Id header (see app/pipeline/identity.py) and
-scopes reads/writes to that caller -- one user cannot see, search, or delete
-another user's files.
+Every route requires an X-User-Id header (see app/api/deps.py) and scopes
+reads/writes to that caller -- one user cannot see, search, or delete another
+user's files.
 """
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -17,7 +17,7 @@ from ...core import config
 from ...repositories.file_repository import FileRecord
 from ...schemas import upload as schemas
 from ...schemas.common import ErrorResponse
-from ...services.upload import upload_service
+from ...services import upload_service
 from ..deps import get_user_id
 
 router = APIRouter(tags=["uploads"])

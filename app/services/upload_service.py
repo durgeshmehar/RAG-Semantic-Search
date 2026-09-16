@@ -1,10 +1,12 @@
 """Business rules for creating, appending to, completing, and deleting uploads.
 
-The orchestrator for everything upload-related, and the only module in this
-package api/v1/upload.py imports -- validation (validators.py) and the
-concurrent-upload cap (concurrency.py) are this package's other members, kept
-separate because they're each a distinct rule rather than orchestration, but
-callers outside this package go through upload_service, not around it.
+The orchestrator for everything upload-related, and the only module
+api/v1/upload.py imports -- validation (upload/validators.py) and the
+concurrent-upload cap (upload/concurrency.py) are this service's supporting
+files, kept in a sibling folder because they're each a distinct rule rather
+than orchestration, but callers outside this file go through upload_service,
+not around it. Every service lives flat at the top of services/ like this
+one; only a service's extra supporting files go in a same-named subfolder.
 
 Every rule that used to live inline in the router is here: offset validation,
 size limits, binary-content rejection, the disk/DB reconciliation on a
@@ -18,10 +20,11 @@ framework involved.
 import time
 import uuid
 
-from . import validators
-from .concurrency import acquire as acquire_upload_slot
-from ...core import config
-from ...core.exceptions import (
+from .upload import validators
+from .upload.concurrency import acquire as acquire_upload_slot
+from .. import storage
+from ..core import config
+from ..core.exceptions import (
     ChunkTooLarge,
     FileTooLarge,
     NoBytesReceivedYet,
@@ -29,12 +32,11 @@ from ...core.exceptions import (
     OffsetMismatch,
     UploadAlreadyDone,
 )
-from ...db import db
-from ...pipeline import storage
-from ...rag.ingestion.chunker import LineBuffer
-from ...repositories import file_repository, vector_repository
-from ...repositories.file_repository import FileRecord
-from ...tasks import job_queue
+from ..db import db
+from ..rag.ingestion.chunker import LineBuffer
+from ..repositories import file_repository, vector_repository
+from ..repositories.file_repository import FileRecord
+from ..tasks import job_queue
 
 __all__ = [
     "acquire_upload_slot",

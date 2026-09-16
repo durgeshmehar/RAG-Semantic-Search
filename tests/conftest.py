@@ -20,7 +20,7 @@ import pytest
 # Every route lives under this prefix (see app/main.py). Defined once so a
 # future version bump or prefix change is a one-line edit here, not a
 # find-and-replace across every test.
-API = "/api/v1"
+API = "/v1"
 
 
 @pytest.fixture

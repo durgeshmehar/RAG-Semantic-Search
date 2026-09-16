@@ -2,8 +2,8 @@
 store the resulting vectors.
 
 Chunking itself (rag/ingestion/chunker.py) runs earlier, inline in the upload
-request path (see app/services/upload/upload_service.py) -- passages are cut
-from bytes already in memory as they arrive, not here. This module is the
+request path (see app/services/upload_service.py) -- passages are cut from
+bytes already in memory as they arrive, not here. This module is the
 embed-and-store half: given passage text and the coordinates identifying each
 passage, call the embedding model and upsert the resulting vectors.
 
@@ -28,8 +28,8 @@ class IngestedPassage:
     """One passage's coordinates paired with its already-read text.
 
     The caller (app/tasks/worker.py) reads the text from disk via
-    app/pipeline/storage.py before calling ingest_batch -- this module never
-    touches the filesystem, only the embedding model and the vector store.
+    app/storage.py before calling ingest_batch -- this module never touches
+    the filesystem, only the embedding model and the vector store.
     """
 
     sequence: int

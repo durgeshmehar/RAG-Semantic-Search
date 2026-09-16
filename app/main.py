@@ -80,13 +80,13 @@ app = FastAPI(
         "delete only see files created under the same `X-User-Id`. Click "
         "**Authorize** below and set it once to have it applied to every "
         "request tried from this page.\n\n"
-        "**Upload flow** (every path below is under `/api/v1`)\n"
-        "1. `POST /api/v1/files` to register the upload and get a `file_id`.\n"
-        "2. `PUT /api/v1/files/{file_id}/chunk?offset=N` repeatedly with raw chunk bodies.\n"
-        "3. `POST /api/v1/files/{file_id}/complete` once every chunk has been sent.\n"
-        "4. `GET /api/v1/files/{file_id}/status` to watch progress -- or, after an "
+        "**Upload flow** (every path below is under `/v1`)\n"
+        "1. `POST /v1/files` to register the upload and get a `file_id`.\n"
+        "2. `PUT /v1/files/{file_id}/chunk?offset=N` repeatedly with raw chunk bodies.\n"
+        "3. `POST /v1/files/{file_id}/complete` once every chunk has been sent.\n"
+        "4. `GET /v1/files/{file_id}/status` to watch progress -- or, after an "
         "interruption, to learn the offset to resume from.\n"
-        "5. `POST /api/v1/files/{file_id}/search` once `searchable` is true.\n\n"
+        "5. `POST /v1/files/{file_id}/search` once `searchable` is true.\n\n"
         "Indexing runs during the upload, so passages become searchable before "
         "`complete` is even called."
     ),
@@ -96,7 +96,7 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
-app.include_router(v1_router, prefix="/api/v1")
+app.include_router(v1_router, prefix="/v1")
 
 
 # Domain exceptions (app/core/exceptions.py) are raised by the service layer with no
@@ -166,7 +166,7 @@ def _custom_openapi() -> dict:
     applied to every route gives Swagger one Authorize dialog that then
     auto-fills the header on every request tried from the page.
 
-    PUT /api/v1/files/{file_id}/chunk reads its body via the raw Request rather
+    PUT /v1/files/{file_id}/chunk reads its body via the raw Request rather
     than a typed parameter (see app/api/v1/upload.py's upload_chunk docstring for why:
     FastAPI 0.115's Body(media_type=...) 422s on real clients' differing
     default Content-Type headers). A raw Request is invisible to FastAPI's
@@ -196,7 +196,7 @@ def _custom_openapi() -> dict:
         for operation in path.values():
             operation.setdefault("security", []).append({"UserId": []})
 
-    schema["paths"]["/api/v1/files/{file_id}/chunk"]["put"]["requestBody"] = {
+    schema["paths"]["/v1/files/{file_id}/chunk"]["put"]["requestBody"] = {
         "required": True,
         "content": {
             "application/octet-stream": {
