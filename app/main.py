@@ -1,38 +1,18 @@
-"""Application entry point.
-
-Startup order matters: the schema must exist before jobs can be recovered, and
-recovery must run before workers start, or a worker could claim a row that
-recovery is about to reset.
-"""
-
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
-from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 
 from .api.v1.router import router as v1_router
 from .core import config
-from .core.exceptions import (
-    ChunkTooLarge,
-    FileNotFound,
-    FileTooLarge,
-    NoBytesReceivedYet,
-    NotTextFile,
-    NothingIndexedYet,
-    OffsetMismatch,
-    TooManyConcurrentUploads,
-    UploadAlreadyDone,
-)
+from .core.error_handlers import register_error_handlers
+from .core.logging_config import setup_logging
+from .core.openapi import register_openapi
 from .db import db
 from .repositories import vector_repository
 from .tasks import job_queue, worker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -99,125 +79,6 @@ app = FastAPI(
 app.include_router(v1_router, prefix="/v1")
 
 
-# Domain exceptions (app/core/exceptions.py) are raised by the service layer with no
-# knowledge of HTTP; this is the single place that maps each one to a status
-# code and response body, instead of every raise site in every router
-# constructing its own HTTPException.
-def _error_response(status_code: int, detail: str, headers: dict | None = None) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"detail": detail}, headers=headers)
-
-
-@app.exception_handler(FileNotFound)
-def _handle_file_not_found(request: Request, exc: FileNotFound) -> JSONResponse:
-    return _error_response(status.HTTP_404_NOT_FOUND, str(exc))
-
-
-@app.exception_handler(UploadAlreadyDone)
-def _handle_upload_already_done(request: Request, exc: UploadAlreadyDone) -> JSONResponse:
-    return _error_response(status.HTTP_409_CONFLICT, str(exc))
-
-
-@app.exception_handler(OffsetMismatch)
-def _handle_offset_mismatch(request: Request, exc: OffsetMismatch) -> JSONResponse:
-    return _error_response(status.HTTP_409_CONFLICT, str(exc))
-
-
-@app.exception_handler(NoBytesReceivedYet)
-def _handle_no_bytes_received(request: Request, exc: NoBytesReceivedYet) -> JSONResponse:
-    return _error_response(status.HTTP_409_CONFLICT, str(exc))
-
-
-@app.exception_handler(ChunkTooLarge)
-def _handle_chunk_too_large(request: Request, exc: ChunkTooLarge) -> JSONResponse:
-    return _error_response(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(exc))
-
-
-@app.exception_handler(FileTooLarge)
-def _handle_file_too_large(request: Request, exc: FileTooLarge) -> JSONResponse:
-    return _error_response(status.HTTP_400_BAD_REQUEST, str(exc))
-
-
-@app.exception_handler(NotTextFile)
-def _handle_not_text_file(request: Request, exc: NotTextFile) -> JSONResponse:
-    return _error_response(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc))
-
-
-@app.exception_handler(NothingIndexedYet)
-def _handle_nothing_indexed(request: Request, exc: NothingIndexedYet) -> JSONResponse:
-    return _error_response(status.HTTP_409_CONFLICT, str(exc))
-
-
-@app.exception_handler(TooManyConcurrentUploads)
-def _handle_too_many_uploads(request: Request, exc: TooManyConcurrentUploads) -> JSONResponse:
-    return _error_response(
-        status.HTTP_503_SERVICE_UNAVAILABLE,
-        str(exc),
-        headers={"Retry-After": str(exc.retry_after_seconds)},
-    )
-
-
-def _custom_openapi() -> dict:
-    """Register X-User-Id as a real security scheme, and document the one
-    endpoint whose body FastAPI can't infer a schema for on its own.
-
-    Without the security scheme, Swagger has no "Authorize" button for a
-    plain header parameter -- every endpoint would need X-User-Id typed in
-    separately, by hand, per try. Declaring it as an apiKey security scheme
-    applied to every route gives Swagger one Authorize dialog that then
-    auto-fills the header on every request tried from the page.
-
-    PUT /v1/files/{file_id}/chunk reads its body via the raw Request rather
-    than a typed parameter (see app/api/v1/upload.py's upload_chunk docstring for why:
-    FastAPI 0.115's Body(media_type=...) 422s on real clients' differing
-    default Content-Type headers). A raw Request is invisible to FastAPI's
-    schema generator, so without this, Swagger's "Try it out" for that
-    endpoint shows no body field at all. The requestBody below is added by
-    hand purely for documentation -- it does not change how the endpoint
-    parses the request at runtime.
-    """
-    if app.openapi_schema:
-        return app.openapi_schema
-
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
-    schema["components"]["securitySchemes"] = {
-        "UserId": {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-User-Id",
-            "description": "Any string identifying the caller. Files are scoped to it.",
-        }
-    }
-    for path in schema["paths"].values():
-        for operation in path.values():
-            operation.setdefault("security", []).append({"UserId": []})
-
-    schema["paths"]["/v1/files/{file_id}/chunk"]["put"]["requestBody"] = {
-        "required": True,
-        "content": {
-            "application/octet-stream": {
-                "schema": {
-                    "type": "string",
-                    "format": "binary",
-                    "description": "Raw chunk bytes -- not JSON, not base64, "
-                    "not wrapped in a field. The exact bytes of the file at "
-                    "[offset, offset+len(body)).",
-                }
-            }
-        },
-    }
-
-    app.openapi_schema = schema
-    return app.openapi_schema
-
-
-app.openapi = _custom_openapi
-
-
 @app.get("/health", tags=["meta"], summary="Liveness, worker, and Qdrant state")
 def health() -> dict:
     try:
@@ -232,3 +93,16 @@ def health() -> dict:
         "queue_depth": job_queue.pending_count(),
         "qdrant_reachable": qdrant_ok,
     }
+
+
+register_error_handlers(app)
+register_openapi(app)
+
+
+
+"""Application entry point.
+
+Startup order matters: the schema must exist before jobs can be recovered, and
+recovery must run before workers start, or a worker could claim a row that
+recovery is about to reset.
+"""

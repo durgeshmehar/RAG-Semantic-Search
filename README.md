@@ -261,7 +261,7 @@ below) reachable from the layers above.
 
 ```
 app/
-├── main.py             # FastAPI app assembly, lifespan, exception handlers, OpenAPI
+├── main.py             # FastAPI app assembly and lifespan only -- wires the pieces below together
 ├── schemas/            # Pydantic request/response shapes
 ├── api/
 │   ├── deps.py          # shared Depends(): get_user_id, acquire_upload_slot
@@ -293,6 +293,9 @@ app/
 ├── core/                # cross-cutting, no domain knowledge
 │   ├── config.py
 │   ├── exceptions.py     # domain exceptions, one per failure case
+│   ├── error_handlers.py # maps each domain exception to an HTTP status + body
+│   ├── logging_config.py # process-wide logging setup
+│   ├── openapi.py        # X-User-Id security scheme, hand-written chunk-upload schema
 │   └── helper/
 │       └── storage.py    # on-disk layout, atomic finalize, byte-range reads
 └── db/
@@ -316,8 +319,9 @@ below), so this is metadata- and coordinate-only persistence, same as the `files
 
 A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
 service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
-status code by one exception handler per error type in [app/main.py](app/main.py) — the mapping
-lives in exactly one place rather than being repeated at every raise site. Services call
+status code by one exception handler per error type, registered by
+[app/core/error_handlers.py](app/core/error_handlers.py)'s `register_error_handlers(app)` — the
+mapping lives in exactly one place rather than being repeated at every raise site. Services call
 repositories for persistence and `rag`/`core.helper.storage` for domain utilities; they never
 import FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and
 tested with no HTTP framework involved.
@@ -339,6 +343,9 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | Module | Responsibility |
 |---|---|
 | [app/core/exceptions.py](app/core/exceptions.py) | Domain exceptions, one per failure case |
+| [app/core/error_handlers.py](app/core/error_handlers.py) | Maps each domain exception to an HTTP status + body |
+| [app/core/openapi.py](app/core/openapi.py) | X-User-Id security scheme, hand-written chunk-upload schema |
+| [app/core/logging_config.py](app/core/logging_config.py) | Process-wide logging setup |
 | [app/core/config.py](app/core/config.py) | Environment-driven settings |
 | [app/api/deps.py](app/api/deps.py) | Shared dependencies: identity, the upload-slot limiter |
 | [app/api/v1/upload.py](app/api/v1/upload.py) | Parse the request, call `upload_service`, shape the response |
