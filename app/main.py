@@ -26,7 +26,8 @@ from .core.exceptions import (
     UploadAlreadyDone,
 )
 from .db import db
-from .pipeline import job_queue, vector_store, worker
+from .repositories import vector_repository
+from .tasks import job_queue, worker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI):
     # Fail fast on a misconfigured QDRANT_URL rather than only discovering it
     # on the first upload's indexing attempt.
     try:
-        vector_store.get_client().get_collections()
+        vector_repository.get_client().get_collections()
         logger.info("connected to Qdrant at %s", config.QDRANT_URL)
     except Exception:
         logger.exception(
@@ -220,7 +221,7 @@ app.openapi = _custom_openapi
 @app.get("/health", tags=["meta"], summary="Liveness, worker, and Qdrant state")
 def health() -> dict:
     try:
-        vector_store.get_client().get_collections()
+        vector_repository.get_client().get_collections()
         qdrant_ok = True
     except Exception:
         qdrant_ok = False

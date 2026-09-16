@@ -8,8 +8,8 @@ loses nothing.
 import time
 
 from app.db import db
-from app.pipeline import job_queue
-from app.pipeline.line_buffer import PassageRange
+from app.rag.ingestion.chunker import PassageRange
+from app.tasks import job_queue
 
 
 def make_file(file_id: str = "f1", total_size: int = 1000, completed: bool = False):

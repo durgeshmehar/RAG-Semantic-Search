@@ -177,7 +177,7 @@ Nothing bounds concurrent embedding beyond the fixed worker count, but chunk *ac
 equivalent ceiling — an unbounded burst of concurrent `PUT /chunk` requests, each holding up to
 `MAX_CHUNK_BYTES` in memory, could add up past the API container's limit with nothing pushing back,
 and a container OOM-kill takes down every in-flight request, not just the excess ones.
-`MAX_CONCURRENT_UPLOADS` (default 50, see [app/pipeline/upload_limiter.py](app/pipeline/upload_limiter.py)) caps
+`MAX_CONCURRENT_UPLOADS` (default 50, see [app/services/upload/concurrency.py](app/services/upload/concurrency.py)) caps
 this the same way `WORKER_COUNT` caps embedding: past the limit, a chunk PUT gets `503` with
 `Retry-After` immediately, rather than being queued or silently slowing the container down.
 
@@ -255,34 +255,67 @@ a boundary isn't embedded as two meaningless fragments.
 
 ## Project layout
 
-Layered by role, with a one-way dependency direction:
-`api → services → repositories → db`, and `core` / `pipeline` (settings, exceptions, and
-reusable domain utilities that aren't tied to any one endpoint) reachable from every layer above.
+Layered by role, with a one-way dependency direction: `api → services → repositories → db`, with
+`rag/`, `tasks/`, `pipeline/`, and `core/` (each a distinct kind of cross-cutting or domain concern,
+detailed below) reachable from the layers above.
 
 ```
 app/
-├── main.py            # FastAPI app assembly, lifespan, exception handlers, OpenAPI
-├── schemas/           # Pydantic request/response shapes
+├── main.py             # FastAPI app assembly, lifespan, exception handlers, OpenAPI
+├── schemas/            # Pydantic request/response shapes
 ├── api/
-│   ├── deps.py         # shared Depends(): get_user_id, acquire_upload_slot
-│   └── v1/             # HTTP layer only: parse request, call a service, shape response
-│       ├── router.py    # aggregates every v1 route
+│   ├── deps.py          # shared Depends(): get_user_id, acquire_upload_slot
+│   └── v1/              # HTTP layer only: parse request, call a service, shape response
+│       ├── router.py     # aggregates every v1 route
 │       ├── upload.py
 │       └── search.py
-├── services/           # Business rules and orchestration -- no SQL, no HTTPException
-├── repositories/       # SQL only -- no business rules, raises app.core.exceptions
-├── pipeline/           # Reusable domain logic: the upload/index/search pipeline
-├── core/               # config.py + exceptions.py -- cross-cutting, no domain knowledge
-└── db/                 # SQLite connection, schema, transactions
+├── services/            # Business rules and orchestration -- no SQL, no HTTPException
+│   ├── search_service.py
+│   └── upload/           # each file owns one upload-time responsibility
+│       ├── upload_service.py  # orchestrator -- the only thing api/ imports
+│       ├── validators.py      # binary-content detection
+│       └── concurrency.py     # the concurrent-upload cap
+├── rag/                 # the RAG pipeline: chunk -> embed -> store -> retrieve
+│   ├── ingestion/
+│   │   ├── chunker.py    # bytes -> line-aligned passage ranges
+│   │   └── embedder.py   # text -> vectors (sentence-transformers)
+│   ├── retrieval/
+│   │   └── retriever.py  # nearest-neighbor search over a file's vectors
+│   └── pipeline.py       # embed-and-store orchestration for one batch of passages
+├── tasks/               # background job machinery (in-process threads, not Celery --
+│   │                    #   there is no message broker in this deployment)
+│   ├── job_queue.py      # durable queue: claim/complete/fail/recover
+│   └── worker.py         # the thread pool that drains it
+├── repositories/        # persistence only -- no business rules
+│   ├── file_repository.py    # SQL for the `files` table
+│   └── vector_repository.py  # Qdrant collection storage (the write/ownership side)
+├── pipeline/            # domain utilities not specific to RAG or background jobs
+│   └── storage.py        # on-disk layout, atomic finalize, byte-range reads
+├── core/                # cross-cutting, no domain knowledge
+│   ├── config.py
+│   └── exceptions.py     # domain exceptions, one per failure case
+└── db/
+    └── db.py             # SQLite connection, schema, transactions
 ```
 
 A handler in `api/v1/` never touches SQL or raises `HTTPException` for a domain reason: it calls a
 service, and any `app.core.exceptions.DomainError` the service raises is translated to the right
 status code by one exception handler per error type in [app/main.py](app/main.py) — the mapping
 lives in exactly one place rather than being repeated at every raise site. Services call
-repositories for persistence and `pipeline` modules for domain utilities (chunking, embedding, the
-vector store); they never import FastAPI, so `upload_service.append_chunk()` or
-`search_service.search()` can be called and tested with no HTTP framework involved.
+repositories for persistence and `rag`/`pipeline` modules for domain utilities; they never import
+FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be called and tested
+with no HTTP framework involved.
+
+**Why `rag/` and `tasks/` are separate from each other.** `rag/pipeline.py`'s `ingest_batch()` is a
+pure function — text and coordinates in, embedded vectors stored, no knowledge of retries or
+threads. `tasks/worker.py` owns claiming work from the queue, retrying failures, and the thread
+lifecycle, then calls into `rag/pipeline.py` for the actual embed-and-store step. This mirrors the
+split a Celery-based deployment would have (task functions vs. the worker pool that runs them),
+without requiring an actual message broker for a service meant to run locally.
+
+**No `rag/generation/` stage.** The assignment asks for the most relevant *sections* of the file
+back, not an LLM-generated answer over them — retrieval returns the matched source passages
+directly. Adding a generation stage would require an LLM this service doesn't call.
 
 Every route is mounted under `/api/v1` — the directory is a real version boundary, not just a
 naming convention, so a future v2 can be added as a sibling package without touching v1's code.
@@ -294,16 +327,18 @@ naming convention, so a future v2 can be added as a sibling package without touc
 | [app/api/deps.py](app/api/deps.py) | Shared dependencies: identity, the upload-slot limiter |
 | [app/api/v1/upload.py](app/api/v1/upload.py) | Parse the request, call `upload_service`, shape the response |
 | [app/api/v1/search.py](app/api/v1/search.py) | Parse the request, call `search_service`, shape the response |
-| [app/services/upload_service.py](app/services/upload_service.py) | Offset validation, size limits, binary detection, state transitions |
-| [app/services/search_service.py](app/services/search_service.py) | Embed the query, ask the vector store, resolve hits to text |
+| [app/services/upload/upload_service.py](app/services/upload/upload_service.py) | Offset validation, size limits, state transitions |
+| [app/services/upload/validators.py](app/services/upload/validators.py) | Detects non-text (binary) content |
+| [app/services/upload/concurrency.py](app/services/upload/concurrency.py) | Caps concurrent chunk uploads held in memory |
+| [app/services/search_service.py](app/services/search_service.py) | Embed the query, ask the retriever, resolve hits to text |
+| [app/rag/ingestion/chunker.py](app/rag/ingestion/chunker.py) | Bytes → line-aligned passage ranges |
+| [app/rag/ingestion/embedder.py](app/rag/ingestion/embedder.py) | Text → vectors |
+| [app/rag/retrieval/retriever.py](app/rag/retrieval/retriever.py) | Nearest-neighbor search over a file's vectors |
+| [app/rag/pipeline.py](app/rag/pipeline.py) | Embed-and-store orchestration for one batch |
+| [app/tasks/job_queue.py](app/tasks/job_queue.py) | Durable queue: claim/complete/fail/recover |
+| [app/tasks/worker.py](app/tasks/worker.py) | Background thread pool draining the queue |
 | [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
-| [app/pipeline/upload_limiter.py](app/pipeline/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
-| [app/pipeline/text_detection.py](app/pipeline/text_detection.py) | Detects non-text (binary) content |
-| [app/pipeline/identity.py](app/pipeline/identity.py) | `X-User-Id` → caller id, for ownership scoping |
-| [app/pipeline/line_buffer.py](app/pipeline/line_buffer.py) | Bytes → line-aligned passage ranges |
-| [app/pipeline/job_queue.py](app/pipeline/job_queue.py) | Durable queue: claim/complete/fail/recover |
-| [app/pipeline/worker.py](app/pipeline/worker.py) | Background embedding threads |
-| [app/pipeline/vector_store.py](app/pipeline/vector_store.py) | Per-file Qdrant collection, idempotent upserts |
+| [app/repositories/vector_repository.py](app/repositories/vector_repository.py) | Per-file Qdrant collection, idempotent upserts |
 | [app/pipeline/storage.py](app/pipeline/storage.py) | On-disk layout, atomic finalize, range reads |
 | [app/db/db.py](app/db/db.py) | SQLite connection, schema, transactions |
 
@@ -315,12 +350,12 @@ naming convention, so a future v2 can be added as a sibling package without touc
 docker compose --profile test run --rm tests
 ```
 
-- **`test_line_buffer.py`** — lossless passage tiling under arbitrary splits; UTF-8 boundaries.
+- **`test_chunker.py`** — lossless passage tiling under arbitrary splits; UTF-8 boundaries.
 - **`test_upload.py`** — chunked upload, interruption, resume, completion, ownership isolation.
 - **`test_concurrency.py`** — racing identical chunk requests: exactly one succeeds.
 - **`test_upload_limiter.py`** — the concurrent-upload cap: peak concurrent holders never exceeds
   the limit, a full set of slots rejects cleanly, a released slot is reusable.
-- **`test_text_detection.py`** — the binary/text boundary: null bytes and common binary signatures
+- **`test_validators.py`** — the binary/text boundary: null bytes and common binary signatures
   (PNG, PDF, zip) are rejected, a chunk boundary landing mid-multibyte-character is not.
 - **`test_job_queue.py`** — exclusive claiming, retry-then-fail, crash recovery.
 - **`test_config.py`** — a 10 GB file's resident footprint stays within budget.
@@ -343,7 +378,7 @@ chunk uploads resulted in exactly 3 accepted and 5 rejected with `503`/`Retry-Af
   is the better trade past a few thousand files.
 - **Text files only**, no PDF/DOCX extraction — a binary upload's first chunk is checked for null
   bytes and invalid UTF-8 and rejected with `415` before anything is written or indexed
-  ([app/pipeline/text_detection.py](app/pipeline/text_detection.py)), rather than silently indexing decode-noise.
+  ([app/services/upload/validators.py](app/services/upload/validators.py)), rather than silently indexing decode-noise.
 - **Identity, not authentication** — `X-User-Id` is trusted as given; a real deployment would put an
   auth layer in front of it.
 - **Startup crash-recovery assumes one process** — safe because it runs before the server accepts

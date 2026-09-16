@@ -18,8 +18,8 @@ a silent slowdown.
 
 import threading
 
-from ..core import config
-from ..core.exceptions import TooManyConcurrentUploads
+from ...core import config
+from ...core.exceptions import TooManyConcurrentUploads
 
 _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 
@@ -27,7 +27,7 @@ _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 # retrying immediately into the same full set of slots.
 RETRY_AFTER_SECONDS = 2
 
-# Re-exported so existing call sites (`except upload_limiter.TooManyConcurrentUploads`)
+# Re-exported so existing call sites (`except concurrency.TooManyConcurrentUploads`)
 # keep working; the actual type lives in app/core/exceptions.py alongside
 # every other domain exception, so app/main.py's exception handlers can catch
 # it there without importing this module.
@@ -35,7 +35,7 @@ __all__ = ["acquire", "TooManyConcurrentUploads", "RETRY_AFTER_SECONDS"]
 
 
 class UploadSlot:
-    """A held slot, released automatically via `with upload_limiter.acquire():`."""
+    """A held slot, released automatically via `with concurrency.acquire():`."""
 
     def __enter__(self) -> "UploadSlot":
         if not _semaphore.acquire(blocking=False):

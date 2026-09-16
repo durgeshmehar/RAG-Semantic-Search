@@ -14,45 +14,45 @@ import time
 
 import pytest
 
-from app.pipeline import upload_limiter
+from app.services.upload import concurrency
 
 
 @pytest.fixture(autouse=True)
 def small_limit(monkeypatch):
     """A tiny cap makes the tests fast and the collision deterministic."""
-    monkeypatch.setattr(upload_limiter.config, "MAX_CONCURRENT_UPLOADS", 2)
-    monkeypatch.setattr(upload_limiter, "_semaphore", threading.Semaphore(2))
+    monkeypatch.setattr(concurrency.config, "MAX_CONCURRENT_UPLOADS", 2)
+    monkeypatch.setattr(concurrency, "_semaphore", threading.Semaphore(2))
 
 
 def test_acquire_succeeds_under_the_limit():
-    with upload_limiter.acquire():
+    with concurrency.acquire():
         pass  # no exception
 
 
 def test_third_concurrent_acquire_is_rejected():
     """Slots 1 and 2 succeed and are held open; the 3rd is turned away."""
     with contextlib.ExitStack() as held:
-        held.enter_context(upload_limiter.acquire())
-        held.enter_context(upload_limiter.acquire())
+        held.enter_context(concurrency.acquire())
+        held.enter_context(concurrency.acquire())
 
-        with pytest.raises(upload_limiter.TooManyConcurrentUploads):
-            upload_limiter.acquire().__enter__()
+        with pytest.raises(concurrency.TooManyConcurrentUploads):
+            concurrency.acquire().__enter__()
 
 
 def test_releasing_frees_a_slot_for_the_next_caller():
-    with upload_limiter.acquire():
-        with upload_limiter.acquire():
+    with concurrency.acquire():
+        with concurrency.acquire():
             # Both slots held; a third must fail.
-            with pytest.raises(upload_limiter.TooManyConcurrentUploads):
-                upload_limiter.acquire().__enter__()
+            with pytest.raises(concurrency.TooManyConcurrentUploads):
+                concurrency.acquire().__enter__()
         # Outer `with` released one slot on exit from the inner block.
-        with upload_limiter.acquire():
+        with concurrency.acquire():
             pass  # succeeds now that a slot is free
 
 
 def test_a_released_slot_can_be_reacquired_repeatedly():
     for _ in range(5):  # far more than the limit of 2, one at a time
-        with upload_limiter.acquire():
+        with concurrency.acquire():
             pass
 
 
@@ -68,14 +68,14 @@ def test_concurrent_threads_never_exceed_the_limit():
         nonlocal active, peak, rejected
         started.wait()
         try:
-            with upload_limiter.acquire():
+            with concurrency.acquire():
                 with lock:
                     active += 1
                     peak = max(peak, active)
                 time.sleep(0.05)
                 with lock:
                     active -= 1
-        except upload_limiter.TooManyConcurrentUploads:
+        except concurrency.TooManyConcurrentUploads:
             with lock:
                 rejected += 1
 

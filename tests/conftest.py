@@ -31,7 +31,7 @@ def isolated_env(monkeypatch):
 
         from app.core import config
         from app.db import db
-        from app.pipeline import vector_store
+        from app.repositories import vector_repository
 
         monkeypatch.setattr(config, "DATA_DIR", root)
         monkeypatch.setattr(config, "UPLOAD_DIR", root / "uploads")
@@ -59,10 +59,10 @@ def _drop_test_collections() -> None:
     collections never collide across tests -- but leaving hundreds of
     empty-ish Qdrant collections around after a full test run is untidy.
     """
-    from app.pipeline import vector_store
+    from app.repositories import vector_repository
 
     try:
-        client = vector_store.get_client()
+        client = vector_repository.get_client()
         for name in client.get_collections().collections:
             if name.name.startswith("file_"):
                 client.delete_collection(name.name)
@@ -82,7 +82,7 @@ def client(isolated_env, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import main
-    from app.pipeline import worker
+    from app.tasks import worker
 
     monkeypatch.setattr(worker, "start_workers", lambda: None)
     monkeypatch.setattr(worker, "stop_workers", lambda: None)

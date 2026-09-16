@@ -7,6 +7,16 @@ speed regardless of how far behind indexing is.
 
 Worker count is intentionally small (2 by default). The model is CPU-bound, so
 more threads add memory without adding much throughput.
+
+These are in-process daemon threads reading a SQLite-backed queue
+(app/tasks/job_queue.py), not Celery tasks -- there is no message broker in
+this deployment. The queue/worker split mirrors what Celery's task
+queue/worker pool give you, adapted to run inside the same container with no
+extra infrastructure (see the README's scaling section for what moving this
+to a real broker and a separate worker fleet would look like).
+
+The actual embed-and-store step is app/rag/pipeline.py's ingest_batch(); this
+module only owns claiming work, retrying failures, and the thread lifecycle.
 """
 
 import logging
@@ -14,7 +24,9 @@ import threading
 
 from ..core import config
 from ..db import db
-from . import embeddings, job_queue, storage, vector_store
+from ..pipeline import storage
+from ..rag.pipeline import IngestedPassage, ingest_batch
+from . import job_queue
 
 logger = logging.getLogger(__name__)
 
@@ -73,16 +85,17 @@ class IndexingWorker(threading.Thread):
                 return True
 
             kept_jobs = [job for job, _ in keep]
-            vectors = embeddings.embed_texts([text for _, text in keep])
-            # Point IDs are derived from (file_id, sequence), so re-upserting
-            # this batch after a crash mid-way overwrites the same points
-            # rather than creating duplicates.
-            vector_store.add_vectors(
+            ingest_batch(
                 kept_jobs[0].file_id,
-                vectors,
-                sequences=[job.sequence for job in kept_jobs],
-                start_bytes=[job.start_byte for job in kept_jobs],
-                end_bytes=[job.end_byte for job in kept_jobs],
+                [
+                    IngestedPassage(
+                        sequence=job.sequence,
+                        start_byte=job.start_byte,
+                        end_byte=job.end_byte,
+                        text=text,
+                    )
+                    for job, text in keep
+                ],
             )
             job_queue.complete_batch(kept_jobs)
 

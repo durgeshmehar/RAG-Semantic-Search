@@ -1,9 +1,15 @@
 """Business rules for creating, appending to, completing, and deleting uploads.
 
-Every rule that used to live inline in app/api/v1/upload.py is here instead:
-offset validation, size limits, binary-content rejection, the disk/DB
-reconciliation on a resumed upload, and the state transitions an upload moves
-through. Routers call these functions and translate the exceptions raised
+The orchestrator for everything upload-related, and the only module in this
+package api/v1/upload.py imports -- validation (validators.py) and the
+concurrent-upload cap (concurrency.py) are this package's other members, kept
+separate because they're each a distinct rule rather than orchestration, but
+callers outside this package go through upload_service, not around it.
+
+Every rule that used to live inline in the router is here: offset validation,
+size limits, binary-content rejection, the disk/DB reconciliation on a
+resumed upload, and the state transitions an upload moves through. The router
+calls these functions and translates the exceptions raised
 (app/core/exceptions.py) into HTTP responses; nothing here imports FastAPI or
 raises HTTPException, so these rules are callable and testable with no HTTP
 framework involved.
@@ -12,8 +18,10 @@ framework involved.
 import time
 import uuid
 
-from ..core import config
-from ..core.exceptions import (
+from . import validators
+from .concurrency import acquire as acquire_upload_slot
+from ...core import config
+from ...core.exceptions import (
     ChunkTooLarge,
     FileTooLarge,
     NoBytesReceivedYet,
@@ -21,11 +29,22 @@ from ..core.exceptions import (
     OffsetMismatch,
     UploadAlreadyDone,
 )
-from ..db import db
-from ..pipeline import job_queue, storage, text_detection, upload_limiter, vector_store
-from ..pipeline.line_buffer import LineBuffer
-from ..repositories import file_repository
-from ..repositories.file_repository import FileRecord
+from ...db import db
+from ...pipeline import storage
+from ...rag.ingestion.chunker import LineBuffer
+from ...repositories import file_repository, vector_repository
+from ...repositories.file_repository import FileRecord
+from ...tasks import job_queue
+
+__all__ = [
+    "acquire_upload_slot",
+    "create_upload",
+    "append_chunk",
+    "complete_upload",
+    "get_status",
+    "list_uploads",
+    "delete_upload",
+]
 
 
 def create_upload(owner_id: str, filename: str, total_size: int) -> str:
@@ -77,7 +96,7 @@ def append_chunk(file_id: str, owner_id: str, offset: int, body: bytes) -> FileR
         # first few KB (a PDF header, a PNG signature, a zip's local file
         # header). Rejecting here avoids indexing a file that can only ever
         # return decode-noise from search.
-        if offset == 0 and text_detection.looks_like_binary(body):
+        if offset == 0 and validators.looks_like_binary(body):
             raise NotTextFile()
 
         # The file on disk is the source of truth for how much we really have.
@@ -182,15 +201,4 @@ def delete_upload(file_id: str, owner_id: str) -> None:
         file_repository.get_owned(conn, file_id, owner_id)  # raises FileNotFound if not owned
         file_repository.delete(conn, file_id)
     storage.delete_all(file_id)
-    vector_store.drop(file_id)
-
-
-def acquire_upload_slot():
-    """Reserve one of the fixed concurrent-upload slots.
-
-    Thin pass-through kept here (rather than having the router import
-    app.core.upload_limiter directly) so every rule governing what counts as
-    an "upload" -- including how many may proceed at once -- is reachable
-    from one module.
-    """
-    return upload_limiter.acquire()
+    vector_repository.drop(file_id)

@@ -8,7 +8,9 @@ confirm the file exists and is owned by the caller.
 
 from ..core.exceptions import NothingIndexedYet
 from ..db import db
-from ..pipeline import embeddings, storage, vector_store
+from ..pipeline import storage
+from ..rag.ingestion import embedder
+from ..rag.retrieval import retriever
 from ..repositories import file_repository
 
 
@@ -35,8 +37,8 @@ def search(file_id: str, owner_id: str, query: str, top_k: int) -> list[SearchHi
     if record.chunks_indexed == 0:
         raise NothingIndexedYet()
 
-    query_vector = embeddings.embed_query(query)
-    hits = vector_store.search(file_id, query_vector, top_k)
+    query_vector = embedder.embed_query(query)
+    hits = retriever.search(file_id, query_vector, top_k)
 
     results = []
     for hit in hits:

@@ -14,7 +14,7 @@ text itself is never returned or stored, since the file on disk already has it.
 
 from dataclasses import dataclass
 
-from ..core import config
+from ...core import config
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from app.pipeline.line_buffer import LineBuffer
+from app.rag.ingestion.chunker import LineBuffer
 
 
 def collect(data: bytes, chunk_sizes: list[int], **kwargs) -> list:

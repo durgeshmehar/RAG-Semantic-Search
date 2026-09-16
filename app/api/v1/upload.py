@@ -17,7 +17,7 @@ from ...core import config
 from ...repositories.file_repository import FileRecord
 from ...schemas import upload as schemas
 from ...schemas.common import ErrorResponse
-from ...services import upload_service
+from ...services.upload import upload_service
 from ..deps import get_user_id
 
 router = APIRouter(tags=["uploads"])

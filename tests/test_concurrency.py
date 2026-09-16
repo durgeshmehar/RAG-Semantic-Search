@@ -58,17 +58,17 @@ def test_chunk_upload_returns_503_when_no_upload_slot_is_free(client, monkeypatc
     through the app -- rather than only testing the semaphore in isolation
     (see test_upload_limiter.py for that).
     """
-    from app.pipeline import upload_limiter
+    from app.services.upload import concurrency
 
-    monkeypatch.setattr(upload_limiter.config, "MAX_CONCURRENT_UPLOADS", 1)
-    monkeypatch.setattr(upload_limiter, "_semaphore", threading.Semaphore(1))
+    monkeypatch.setattr(concurrency.config, "MAX_CONCURRENT_UPLOADS", 1)
+    monkeypatch.setattr(concurrency, "_semaphore", threading.Semaphore(1))
 
     response = client.post(
         f"{API}/files", json={"filename": "full.log", "total_size": 10}
     )
     file_id = response.json()["file_id"]
 
-    with upload_limiter.acquire():  # the one slot is now held
+    with concurrency.acquire():  # the one slot is now held
         response = client.put(
             f"{API}/files/{file_id}/chunk", params={"offset": 0}, content=b"x" * 10
         )
