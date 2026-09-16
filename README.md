@@ -253,23 +253,40 @@ a boundary isn't embedded as two meaningless fragments.
 
 ## Project layout
 
-Layered by role — `routers` depend on `core`, `core` depends on `infra`, never the other way:
+Layered by role, with a one-way dependency direction:
+`routers → services → repositories → infra`, and `core` (reusable domain utilities
+that aren't tied to any one endpoint) reachable from both routers and services.
 
 ```
 app/
-├── main.py            # FastAPI app assembly, lifespan, OpenAPI customization
-├── models.py          # Pydantic schemas shared across layers
-├── routers/           # HTTP layer only -- request/response, no business logic
-├── core/              # Domain logic: the upload/index/search pipeline
-└── infra/             # Cross-cutting infrastructure, no domain knowledge
+├── main.py          # FastAPI app assembly, lifespan, exception handlers, OpenAPI
+├── models.py        # Pydantic schemas (request/response shapes)
+├── errors.py        # Domain exceptions -- no FastAPI import, no HTTP knowledge
+├── routers/         # HTTP layer only: parse request, call a service, shape response
+├── services/        # Business rules and orchestration -- no SQL, no HTTPException
+├── repositories/    # SQL only -- no business rules, raises app.errors, not HTTPException
+├── core/            # Reusable domain logic: the upload/index/search pipeline
+└── infra/           # Cross-cutting infrastructure, no domain knowledge
 ```
+
+A router never touches SQL or raises `HTTPException` for a domain reason: it calls a service,
+and any `app.errors.DomainError` the service raises is translated to the right status code by
+one exception handler per error type in [app/main.py](app/main.py) — the mapping lives in exactly
+one place rather than being repeated at every raise site. Services call repositories for
+persistence and `core` modules for domain utilities (chunking, embedding, the vector store); they
+never import FastAPI, so `upload_service.append_chunk()` or `search_service.search()` can be
+called and tested with no HTTP framework involved.
 
 | Module | Responsibility |
 |---|---|
-| [app/routers/upload.py](app/routers/upload.py) | Chunked upload, completion, offset validation, status |
-| [app/routers/search.py](app/routers/search.py) | Query embedding, Qdrant lookup, byte-range reads |
+| [app/errors.py](app/errors.py) | Domain exceptions, one per failure case |
+| [app/routers/upload.py](app/routers/upload.py) | Parse the request, call `upload_service`, shape the response |
+| [app/routers/search.py](app/routers/search.py) | Parse the request, call `search_service`, shape the response |
+| [app/services/upload_service.py](app/services/upload_service.py) | Offset validation, size limits, binary detection, state transitions |
+| [app/services/search_service.py](app/services/search_service.py) | Embed the query, ask the vector store, resolve hits to text |
+| [app/repositories/file_repository.py](app/repositories/file_repository.py) | SQL for the `files` table only |
 | [app/core/upload_limiter.py](app/core/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
-| [app/core/text_detection.py](app/core/text_detection.py) | Rejects binary uploads on their first chunk |
+| [app/core/text_detection.py](app/core/text_detection.py) | Detects non-text (binary) content |
 | [app/core/identity.py](app/core/identity.py) | `X-User-Id` → caller id, for ownership scoping |
 | [app/core/line_buffer.py](app/core/line_buffer.py) | Bytes → line-aligned passage ranges |
 | [app/core/job_queue.py](app/core/job_queue.py) | Durable queue: claim/complete/fail/recover |

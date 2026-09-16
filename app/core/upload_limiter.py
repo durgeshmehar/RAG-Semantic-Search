@@ -18,6 +18,7 @@ a silent slowdown.
 
 import threading
 
+from ..errors import TooManyConcurrentUploads
 from ..infra import config
 
 _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
@@ -26,9 +27,11 @@ _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 # retrying immediately into the same full set of slots.
 RETRY_AFTER_SECONDS = 2
 
-
-class TooManyConcurrentUploads(Exception):
-    """Raised when no upload slot is free. Callers map this to HTTP 503."""
+# Re-exported so existing call sites (`except upload_limiter.TooManyConcurrentUploads`)
+# keep working; the actual type lives in app/errors.py alongside every other
+# domain exception, so app/main.py's exception handlers can catch it there
+# without importing this module.
+__all__ = ["acquire", "TooManyConcurrentUploads", "RETRY_AFTER_SECONDS"]
 
 
 class UploadSlot:
@@ -37,8 +40,7 @@ class UploadSlot:
     def __enter__(self) -> "UploadSlot":
         if not _semaphore.acquire(blocking=False):
             raise TooManyConcurrentUploads(
-                f"server is handling {config.MAX_CONCURRENT_UPLOADS} uploads "
-                "already; retry shortly"
+                config.MAX_CONCURRENT_UPLOADS, RETRY_AFTER_SECONDS
             )
         return self
 

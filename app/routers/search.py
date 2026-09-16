@@ -1,24 +1,15 @@
 """Semantic search over an uploaded file.
 
-The query is embedded with the same model used at index time, so a natural
-language phrase lands near passages that *mean* the same thing, whether or not
-they share words. "database connectivity problems" scores highly against
-"Connection to database failed after 30 seconds" because the sentence
-embeddings are close, not because the terms overlap.
-
-Qdrant carries each passage's byte range as point payload, so a search result
-maps directly to a location in the uploaded file with no lookup back to
-SQLite -- the matching text itself is still read from the file by that byte
-range, since chunk rows (and now point payload) store coordinates rather than
-a duplicate copy of the corpus.
+The handler only parses the request, calls the service, and shapes the
+response -- the actual matching (embed query, ask the vector store, resolve
+byte ranges to text) lives in app/services/search_service.py.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from .. import models
-from ..core import embeddings, storage, vector_store
 from ..core.identity import get_user_id
-from ..infra import db
+from ..services import search_service
 
 router = APIRouter(tags=["search"])
 
@@ -42,44 +33,20 @@ def search_file(
     Searching is allowed while the upload is still in progress -- whatever has
     been indexed so far is queryable.
     """
-    conn = db.get_connection()
-    file_row = conn.execute(
-        "SELECT file_id, owner_id, chunks_indexed FROM files WHERE file_id = ?",
-        (file_id,),
-    ).fetchone()
-    if file_row is None or file_row["owner_id"] != user_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown file_id: {file_id}")
-
-    if file_row["chunks_indexed"] == 0:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "no passages indexed yet; poll /status until searchable is true",
-        )
-
-    query_vector = embeddings.embed_query(payload.query)
-    hits = vector_store.search(file_id, query_vector, payload.top_k)
-
-    results = []
-    for hit in hits:
-        text = storage.read_range(file_id, hit["start_byte"], hit["end_byte"])
-        if not text:
-            # A genuinely empty read only happens if the file's gone; a
-            # whitespace-only passage is legitimate content and must not be
-            # dropped from results just because it strips to nothing.
-            continue
-        results.append(
-            models.SearchHit(
-                text=text,
-                start_byte=hit["start_byte"],
-                end_byte=hit["end_byte"],
-                score=hit["score"],
-                sequence=hit["sequence"],
-            )
-        )
+    hits = search_service.search(file_id, user_id, payload.query, payload.top_k)
 
     return models.SearchResponse(
         file_id=file_id,
         query=payload.query,
-        total_hits=len(results),
-        results=results,
+        total_hits=len(hits),
+        results=[
+            models.SearchHit(
+                text=h.text,
+                start_byte=h.start_byte,
+                end_byte=h.end_byte,
+                score=h.score,
+                sequence=h.sequence,
+            )
+            for h in hits
+        ],
     )
