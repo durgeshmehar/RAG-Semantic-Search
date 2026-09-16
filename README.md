@@ -160,11 +160,16 @@ under 1 GB regardless of file size:
 | 10 GB | 4,800 B | 1.0 GB |
 
 The 4 GB budget applies to the whole service, not per container, so the two containers' Docker
-memory limits are sized to sum to 4 GB: **API 2.75G, Qdrant 1.25G**
+memory limits are sized to sum to 4 GB: **API 2G, Qdrant 2G**
 ([docker-compose.yml](docker-compose.yml)) — hitting either ceiling gets that container OOM-killed
-rather than silently degrading the host. Measured against those limits under a real 22.7 MB /
-44,542-passage upload (`docker stats` sampled continuously through upload and indexing): the API
-container ran 330 MB–890 MB (12–32% of its limit) and Qdrant stayed under 90 MB (7% of its limit).
+rather than silently degrading the host. An even split, not a size-proportional one: a live test
+declaring a full 10 GB upload (so `passage_size_for()` produced true 10GB-scale passage sizes) while
+uploading 180 MB of real content measured the API container peaking at ~880 MB (44% of a 2G limit)
+during the upload-plus-immediate-embedding burst — notably higher than a static arithmetic estimate
+predicted, because chunks can arrive faster than the fixed 2-worker pool drains them. Extrapolating
+that run's Qdrant usage to the full 10 GB scale gives ~1.0 GB resident. An earlier 2.75G/1.25G split
+gave Qdrant too little headroom at that extrapolated worst case relative to what the API actually
+needed at its measured peak; 2G/2G gives both containers comparable real margin instead.
 
 Nothing bounds concurrent embedding beyond the fixed worker count, but chunk *acceptance* had no
 equivalent ceiling — an unbounded burst of concurrent `PUT /chunk` requests, each holding up to

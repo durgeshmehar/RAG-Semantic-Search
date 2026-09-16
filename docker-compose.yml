@@ -18,10 +18,23 @@ services:
         limits:
           # The assignment specifies 4 GB for the whole service, not per
           # container -- this and the api container's limit below must sum
-          # to 4G, not each independently target 4G. Split 1.25G/2.75G to
-          # match measured usage (see README section 1) rather than round
-          # numbers picked in isolation.
-          memory: 1.25G
+          # to 4G, not each independently target 4G.
+          #
+          # An even 2G/2G split, not a size-proportional one: a live upload
+          # of a 180 MB file (declared as 10 GB, so passage_size_for()
+          # produced true 10GB-scale passage sizes) measured the API
+          # container peaking at ~964 MB during the upload-plus-immediate-
+          # embedding burst -- well above what static arithmetic predicted,
+          # because chunks can arrive faster than the fixed 2-worker pool
+          # drains them, causing a transient pileup right after a burst.
+          # Extrapolating the same run's Qdrant usage to full 10 GB scale
+          # gives ~1.0 GB resident (matching the earlier arithmetic
+          # estimate). 2G/2G gives both containers real, comparable
+          # headroom (~53% free each at their respective peaks) instead of
+          # a split that looks balanced on paper but is tight for whichever
+          # side the live measurement turns out to underestimate. See
+          # README section 1 for the measurement.
+          memory: 2G
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 10s
@@ -52,13 +65,16 @@ services:
       MAX_CHUNK_BYTES: "16777216"
     # The assignment's 4 GB constraint applies to the whole service, so this
     # limit and Qdrant's above are sized to sum to 4G total, not 4G each.
-    # Enforced rather than assumed: an accidental full-file read or a memory
-    # leak hits this ceiling and gets OOM-killed here instead of silently
-    # passing on a larger development machine.
+    # 2G gives real headroom above the ~964 MB peak observed live during a
+    # large-file upload burst (see Qdrant's comment above for the
+    # measurement) rather than the tighter margin an earlier, arithmetic-only
+    # estimate suggested. Enforced rather than assumed: an accidental
+    # full-file read or a memory leak hits this ceiling and gets OOM-killed
+    # here instead of silently passing on a larger development machine.
     deploy:
       resources:
         limits:
-          memory: 2.75G
+          memory: 2G
     restart: unless-stopped
 
   # Runs the suite against the same image, then exits. `--profile test` keeps
