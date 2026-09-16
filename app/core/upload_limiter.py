@@ -18,7 +18,7 @@ a silent slowdown.
 
 import threading
 
-from . import config
+from ..infra import config
 
 _semaphore = threading.Semaphore(config.MAX_CONCURRENT_UPLOADS)
 

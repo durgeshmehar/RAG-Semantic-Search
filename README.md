@@ -175,7 +175,7 @@ Nothing bounds concurrent embedding beyond the fixed worker count, but chunk *ac
 equivalent ceiling — an unbounded burst of concurrent `PUT /chunk` requests, each holding up to
 `MAX_CHUNK_BYTES` in memory, could add up past the API container's limit with nothing pushing back,
 and a container OOM-kill takes down every in-flight request, not just the excess ones.
-`MAX_CONCURRENT_UPLOADS` (default 50, see [app/upload_limiter.py](app/upload_limiter.py)) caps
+`MAX_CONCURRENT_UPLOADS` (default 50, see [app/core/upload_limiter.py](app/core/upload_limiter.py)) caps
 this the same way `WORKER_COUNT` caps embedding: past the limit, a chunk PUT gets `503` with
 `Retry-After` immediately, rather than being queued or silently slowing the container down.
 
@@ -253,20 +253,31 @@ a boundary isn't embedded as two meaningless fragments.
 
 ## Project layout
 
+Layered by role — `routers` depend on `core`, `core` depends on `infra`, never the other way:
+
+```
+app/
+├── main.py            # FastAPI app assembly, lifespan, OpenAPI customization
+├── models.py          # Pydantic schemas shared across layers
+├── routers/           # HTTP layer only -- request/response, no business logic
+├── core/              # Domain logic: the upload/index/search pipeline
+└── infra/             # Cross-cutting infrastructure, no domain knowledge
+```
+
 | Module | Responsibility |
 |---|---|
-| [app/upload.py](app/upload.py) | Chunked upload, completion, offset validation, status |
-| [app/upload_limiter.py](app/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
-| [app/text_detection.py](app/text_detection.py) | Rejects binary uploads on their first chunk |
-| [app/identity.py](app/identity.py) | `X-User-Id` → caller id, for ownership scoping |
-| [app/search.py](app/search.py) | Query embedding, Qdrant lookup, byte-range reads |
-| [app/pipeline/line_buffer.py](app/pipeline/line_buffer.py) | Bytes → line-aligned passage ranges |
-| [app/pipeline/job_queue.py](app/pipeline/job_queue.py) | Durable queue: claim/complete/fail/recover |
-| [app/pipeline/worker.py](app/pipeline/worker.py) | Background embedding threads |
-| [app/vector_store.py](app/vector_store.py) | Per-file Qdrant collection, idempotent upserts |
-| [app/storage.py](app/storage.py) | On-disk layout, atomic finalize, range reads |
-
-Configuration is environment-driven — see [app/config.py](app/config.py).
+| [app/routers/upload.py](app/routers/upload.py) | Chunked upload, completion, offset validation, status |
+| [app/routers/search.py](app/routers/search.py) | Query embedding, Qdrant lookup, byte-range reads |
+| [app/core/upload_limiter.py](app/core/upload_limiter.py) | Caps concurrent chunk uploads held in memory |
+| [app/core/text_detection.py](app/core/text_detection.py) | Rejects binary uploads on their first chunk |
+| [app/core/identity.py](app/core/identity.py) | `X-User-Id` → caller id, for ownership scoping |
+| [app/core/line_buffer.py](app/core/line_buffer.py) | Bytes → line-aligned passage ranges |
+| [app/core/job_queue.py](app/core/job_queue.py) | Durable queue: claim/complete/fail/recover |
+| [app/core/worker.py](app/core/worker.py) | Background embedding threads |
+| [app/core/vector_store.py](app/core/vector_store.py) | Per-file Qdrant collection, idempotent upserts |
+| [app/core/storage.py](app/core/storage.py) | On-disk layout, atomic finalize, range reads |
+| [app/infra/db.py](app/infra/db.py) | SQLite connection, schema, transactions |
+| [app/infra/config.py](app/infra/config.py) | Environment-driven settings |
 
 ---
 
@@ -304,7 +315,7 @@ chunk uploads resulted in exactly 3 accepted and 5 rejected with `503`/`Retry-Af
   is the better trade past a few thousand files.
 - **Text files only**, no PDF/DOCX extraction — a binary upload's first chunk is checked for null
   bytes and invalid UTF-8 and rejected with `415` before anything is written or indexed
-  ([app/text_detection.py](app/text_detection.py)), rather than silently indexing decode-noise.
+  ([app/core/text_detection.py](app/core/text_detection.py)), rather than silently indexing decode-noise.
 - **Identity, not authentication** — `X-User-Id` is trusted as given; a real deployment would put an
   auth layer in front of it.
 - **Startup crash-recovery assumes one process** — safe because it runs before the server accepts

@@ -24,7 +24,8 @@ def isolated_env(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
 
-        from app import config, db, vector_store
+        from app.core import vector_store
+        from app.infra import config, db
 
         monkeypatch.setattr(config, "DATA_DIR", root)
         monkeypatch.setattr(config, "UPLOAD_DIR", root / "uploads")
@@ -52,7 +53,7 @@ def _drop_test_collections() -> None:
     collections never collide across tests -- but leaving hundreds of
     empty-ish Qdrant collections around after a full test run is untidy.
     """
-    from app import vector_store
+    from app.core import vector_store
 
     try:
         client = vector_store.get_client()
@@ -75,7 +76,7 @@ def client(isolated_env, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import main
-    from app.pipeline import worker
+    from app.core import worker
 
     monkeypatch.setattr(worker, "start_workers", lambda: None)
     monkeypatch.setattr(worker, "stop_workers", lambda: None)

@@ -10,7 +10,7 @@ the suite.
 
 import pytest
 
-from app.pipeline import worker
+from app.core import worker
 from tests.conftest import upload_file
 
 

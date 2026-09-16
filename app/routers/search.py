@@ -15,9 +15,10 @@ a duplicate copy of the corpus.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from . import db, models, storage, vector_store
-from .identity import get_user_id
-from .pipeline import embeddings
+from .. import models
+from ..core import embeddings, storage, vector_store
+from ..core.identity import get_user_id
+from ..infra import db
 
 router = APIRouter(tags=["search"])
 

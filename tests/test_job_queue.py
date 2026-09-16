@@ -7,9 +7,9 @@ loses nothing.
 
 import time
 
-from app import db
-from app.pipeline import job_queue
-from app.pipeline.line_buffer import PassageRange
+from app.core import job_queue
+from app.core.line_buffer import PassageRange
+from app.infra import db
 
 
 def make_file(file_id: str = "f1", total_size: int = 1000, completed: bool = False):
@@ -92,7 +92,7 @@ def test_complete_marks_indexed_and_advances_watermark(isolated_env):
 
 def test_failure_retries_then_gives_up(isolated_env, monkeypatch):
     """A bad chunk retries up to the limit, then fails without blocking others."""
-    from app import config
+    from app.infra import config
 
     monkeypatch.setattr(config, "MAX_RETRIES", 3)
 

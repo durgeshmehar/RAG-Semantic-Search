@@ -6,7 +6,7 @@ spec served at /docs.
 
 from pydantic import BaseModel, Field
 
-from . import config
+from .infra import config
 
 
 class CreateUploadRequest(BaseModel):

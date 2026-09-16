@@ -13,7 +13,7 @@ Vector storage lives in Qdrant (see vector_store.py), not on this filesystem.
 
 from pathlib import Path
 
-from . import config
+from ..infra import config
 
 
 def partial_path(file_id: str) -> Path:

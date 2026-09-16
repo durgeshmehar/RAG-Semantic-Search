@@ -5,7 +5,7 @@ bytes on disk must end up identical to what the client sent, and the caller
 who created a file is the only one who can act on it.
 """
 
-from app import storage
+from app.core import storage
 from tests.conftest import upload_file
 
 
@@ -92,7 +92,7 @@ def test_wrong_offset_is_rejected_with_resume_hint(client, sample_text):
 
 def test_upload_beyond_max_file_bytes_is_rejected(client, monkeypatch):
     """total_size is a hint, but there is still a hard ceiling on real bytes."""
-    from app import config
+    from app.infra import config
 
     monkeypatch.setattr(config, "MAX_FILE_BYTES", 40)
 
@@ -120,7 +120,7 @@ def test_binary_first_chunk_is_rejected(client):
     )
     assert response.status_code == 415
 
-    from app import storage
+    from app.core import storage
 
     # Nothing should have been written for a rejected first chunk.
     assert storage.current_size(file_id) == 0
@@ -199,7 +199,7 @@ def test_complete_flushes_the_final_unterminated_line(client):
     that matters: the enqueued passage(s) must cover the whole file, not stop
     short at the last newline.
     """
-    from app import db
+    from app.infra import db
 
     data = b"first line\nsecond line with no trailing newline"
     file_id = upload_file(client, data)

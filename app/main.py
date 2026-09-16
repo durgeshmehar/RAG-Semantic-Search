@@ -11,8 +11,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from . import config, db, search, upload, vector_store
-from .pipeline import job_queue, worker
+from .core import job_queue, vector_store, worker
+from .infra import config, db
+from .routers import search, upload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -96,7 +97,7 @@ def _custom_openapi() -> dict:
     auto-fills the header on every request tried from the page.
 
     PUT /files/{file_id}/chunk reads its body via the raw Request rather than
-    a typed parameter (see app/upload.py's upload_chunk docstring for why:
+    a typed parameter (see app/routers/upload.py's upload_chunk docstring for why:
     FastAPI 0.115's Body(media_type=...) 422s on real clients' differing
     default Content-Type headers). A raw Request is invisible to FastAPI's
     schema generator, so without this, Swagger's "Try it out" for that

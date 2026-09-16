@@ -7,7 +7,7 @@ background workers, so the client is never made to wait on CPU-bound work.
 Resume needs no special endpoint: GET /files/{id}/status reports
 `bytes_received`, and the client continues from there.
 
-Every route requires an X-User-Id header (see app/identity.py) and scopes
+Every route requires an X-User-Id header (see app/core/identity.py) and scopes
 reads/writes to that caller -- one user cannot see, search, or delete another
 user's files.
 """
@@ -17,10 +17,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from . import config, db, models, storage, text_detection, upload_limiter, vector_store
-from .identity import get_user_id
-from .pipeline import job_queue
-from .pipeline.line_buffer import LineBuffer
+from .. import models
+from ..core import job_queue, storage, text_detection, upload_limiter, vector_store
+from ..core.identity import get_user_id
+from ..core.line_buffer import LineBuffer
+from ..infra import config, db
 
 router = APIRouter(tags=["uploads"])
 

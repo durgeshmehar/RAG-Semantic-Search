@@ -21,7 +21,7 @@ so swapping in SQS or Redis at scale is a contained change.
 import time
 from dataclasses import dataclass
 
-from .. import config, db
+from ..infra import config, db
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ chunk split mid-multibyte-character, a stray control byte) and "not text at
 all."
 """
 
-from app import text_detection
+from app.core import text_detection
 
 
 def test_plain_ascii_text_is_not_binary():
