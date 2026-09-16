@@ -8,10 +8,16 @@ Usage:
     python3 scripts/e2e_test.py --all          # run every step once, no menu
     python3 scripts/e2e_test.py --no-compose   # assume the API is already running
 
-Each menu choice prints one short [PASS]/[FAIL] line per assertion it
-makes. Picking a step that depends on an earlier one (e.g. "search" needs
-an uploaded, completed file) runs whatever prerequisite steps haven't run
-yet for you, silently, then does the step you asked for.
+Every menu choice always re-runs its step fresh -- picking the same number
+twice in a row does the whole thing again rather than silently no-op'ing,
+which also happens to exercise the API's own idempotency guarantees (e.g.
+completing an already-completed upload, or checking status on a deleted
+file) instead of hiding them behind a skip. A step that needs an upload in
+flight creates one automatically if none exists yet.
+
+Each step prints one [PASS]/[FAIL] line per assertion plus a short stats
+line (byte/chunk/passage counts, elapsed time, HTTP status) so a human
+watching the terminal gets more than just pass/fail.
 
 Uses httpx, already a project dependency (see requirements.txt) for the
 TestClient in tests/ -- no extra install needed to run this.
@@ -51,11 +57,18 @@ def info(msg: str) -> None:
     print(f"  {msg}")
 
 
+def stats(**fields: object) -> None:
+    """One compact line of extra numbers/state after a step's PASS/FAIL lines."""
+    rendered = ", ".join(f"{k}={v}" for k, v in fields.items())
+    print(f"  stats: {rendered}")
+
+
 class Session:
-    """Live state for one run: the HTTP client and how far the sample
-    upload has progressed. Each step method is idempotent -- calling it
-    again after it already succeeded just re-confirms the same outcome --
-    and lazily runs whatever earlier steps it depends on."""
+    """Live state for one run: the HTTP client and the most recently
+    created file_id. Every step always performs its real work again when
+    invoked -- it does not skip based on prior state -- but will create an
+    upload first if one doesn't exist yet, so any step can be picked on its
+    own from a clean session."""
 
     def __init__(self) -> None:
         self.client = httpx.Client(timeout=30)
@@ -63,10 +76,17 @@ class Session:
         self.file_size = len(self.data)
         self.file_id: str | None = None
         self.bytes_sent = 0
-        self.completed = False
-        self.indexed = False
+        # Tracks whether the CURRENT file_id has been through complete()/
+        # poll_status() at least once, purely so ensure_uploaded_and_completed()
+        # (an implicit prerequisite check other steps make) doesn't redo work
+        # a menu pick already did earlier in the same run_all()/session. A
+        # step invoked directly from the menu always redoes its own work
+        # regardless of these flags -- only the *helper* consults them.
+        self.completed_once = False
+        self.indexed_once = False
         self.passed = 0
         self.failed = 0
+        self.run_count = 0  # how many times any step has been invoked, for the summary
 
     def record(self, success: bool, msg: str) -> None:
         if success:
@@ -76,34 +96,74 @@ class Session:
             self.failed += 1
             bad(msg)
 
+    def ensure_uploaded_and_completed(self) -> None:
+        """Prerequisite helper for steps that need a completed upload to act
+        on. Only does the work this session hasn't already done for the
+        current file_id -- so run_all() and a step's own implicit
+        prerequisites don't reprint "Complete the upload" on every single
+        later step. Picking "complete" directly from the menu bypasses this
+        entirely and always redoes the real work (see complete() itself)."""
+        if self.file_id is None:
+            self.register()
+        if self.bytes_sent < self.file_size:
+            self.upload_with_interrupt()
+        if not self.completed_once:
+            self.complete()
+
+    def ensure_indexed(self) -> None:
+        """Prerequisite helper: only polls if this file_id hasn't already
+        been confirmed fully indexed this session."""
+        self.ensure_uploaded_and_completed()
+        if not self.indexed_once:
+            self.poll_status()
+
     # ---- steps --------------------------------------------------------
 
     def register(self) -> None:
-        if self.file_id is not None:
-            return
+        """Always creates a brand-new upload, replacing the session's
+        current file_id -- picking this again is meant to register another
+        file, not confirm the old one still exists."""
+        self.run_count += 1
         step("Register upload")
+        t0 = time.monotonic()
         resp = self.client.post(
             f"{API_URL}/files",
             headers={"X-User-Id": USER_A},
             json={"filename": "sample.log", "total_size": self.file_size},
         )
+        elapsed = time.monotonic() - t0
         if resp.status_code != 201:
             self.record(False, f"POST /files returned {resp.status_code}: {resp.text}")
             return
-        self.file_id = resp.json()["file_id"]
+        body = resp.json()
+        self.file_id = body["file_id"]
+        self.bytes_sent = 0
+        self.completed_once = False
+        self.indexed_once = False
         self.record(True, f"created upload, file_id={self.file_id}")
+        stats(
+            http_status=resp.status_code,
+            chunk_size_limit=body.get("chunk_size"),
+            total_size_declared=body.get("total_size"),
+            elapsed_s=round(elapsed, 3),
+        )
 
     def upload_with_interrupt(self) -> None:
-        self.register()
+        """Always (re-)uploads the sample file from byte 0 against the
+        current file_id -- if it's already fully uploaded, this registers a
+        fresh file first so there is always real work to do."""
+        self.run_count += 1
+        if self.file_id is None or self.bytes_sent >= self.file_size:
+            self.register()
         if self.file_id is None:
-            return
-        if self.bytes_sent >= self.file_size:
             return
 
         step("Chunked upload with a simulated interruption")
-        offset = self.bytes_sent
+        t0 = time.monotonic()
+        offset = 0
         chunk_index = 0
         interrupted = False
+        interrupt_checked_ok = False
         while offset < self.file_size:
             chunk_index += 1
 
@@ -116,10 +176,11 @@ class Session:
                     f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_A}
                 )
                 reported_offset = status_resp.json()["bytes_received"]
+                interrupt_checked_ok = reported_offset == offset
                 self.record(
-                    reported_offset == offset,
+                    interrupt_checked_ok,
                     f"interrupted after {offset} bytes; /status reports {reported_offset}"
-                    if reported_offset == offset
+                    if interrupt_checked_ok
                     else f"resume offset mismatch: sent {offset}, /status says {reported_offset}",
                 )
 
@@ -139,113 +200,239 @@ class Session:
                 )
                 return
             offset = end
+
+        elapsed = time.monotonic() - t0
         self.bytes_sent = offset
+        chunks_enqueued = resp.json().get("chunks_enqueued")
         self.record(True, f"uploaded {self.file_size} bytes across {chunk_index} chunks")
+        stats(
+            chunks_sent=chunk_index,
+            bytes_uploaded=offset,
+            avg_chunk_bytes=round(offset / chunk_index) if chunk_index else 0,
+            passages_enqueued_total=chunks_enqueued,
+            interrupt_resume_verified=interrupt_checked_ok,
+            elapsed_s=round(elapsed, 3),
+        )
 
     def complete(self) -> None:
-        self.upload_with_interrupt()
-        if self.file_id is None or self.completed:
+        """Always calls POST .../complete against the current file_id, even
+        if it was already completed -- that's a real idempotency check
+        (the API must return upload_status=completed again, not error)
+        rather than something this script should hide by skipping."""
+        self.run_count += 1
+        if self.file_id is None:
+            self.register()
+        if self.file_id is not None and self.bytes_sent < self.file_size:
+            self.upload_with_interrupt()
+        if self.file_id is None:
             return
 
         step("Complete the upload")
+        t0 = time.monotonic()
         resp = self.client.post(f"{API_URL}/files/{self.file_id}/complete", headers={"X-User-Id": USER_A})
-        upload_status = resp.json().get("upload_status")
-        self.completed = upload_status == "completed"
+        elapsed = time.monotonic() - t0
+        body = resp.json()
+        upload_status = body.get("upload_status")
+        success = upload_status == "completed"
         self.record(
-            self.completed,
+            success,
             "upload_status=completed"
-            if self.completed
+            if success
             else f"expected upload_status=completed, got '{upload_status}' (response: {resp.text})",
         )
 
+        # Call it again immediately: completing an already-completed upload
+        # must be a safe no-op, not an error, per app/services/upload_service.py.
+        resp2 = self.client.post(f"{API_URL}/files/{self.file_id}/complete", headers={"X-User-Id": USER_A})
+        idempotent = resp2.status_code == 200 and resp2.json().get("upload_status") == "completed"
+        self.record(
+            idempotent,
+            "calling complete a second time is idempotent (still upload_status=completed)"
+            if idempotent
+            else f"second complete() call was not idempotent: HTTP {resp2.status_code}, {resp2.text}",
+        )
+        stats(
+            http_status=resp.status_code,
+            bytes_received=body.get("bytes_received"),
+            total_size_final=body.get("total_size"),
+            chunks_total=body.get("chunks_total"),
+            elapsed_s=round(elapsed, 3),
+        )
+        self.completed_once = success
+
     def poll_status(self) -> None:
-        self.complete()
-        if self.file_id is None or self.indexed:
+        """Always polls fresh -- re-picking this after indexing already
+        finished just confirms the terminal state again, printing the
+        latest counts rather than skipping the HTTP calls entirely."""
+        self.run_count += 1
+        self.ensure_uploaded_and_completed()
+        if self.file_id is None:
             return
 
         step("Poll status until indexing catches up")
+        t0 = time.monotonic()
         processing_status = None
+        body: dict = {}
         for i in range(1, 61):
             resp = self.client.get(f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_A})
             body = resp.json()
             processing_status = body.get("processing_status")
-            chunks_indexed = body.get("chunks_indexed", 0)
             if processing_status == "completed":
-                self.indexed = True
-                self.record(True, f"processing_status=completed ({chunks_indexed} passages indexed, ~{i}s)")
-                return
+                break
             time.sleep(1)
-        self.record(False, f"indexing did not finish within 60s (last processing_status={processing_status})")
+        elapsed = time.monotonic() - t0
+
+        success = processing_status == "completed"
+        self.record(
+            success,
+            f"processing_status=completed ({body.get('chunks_indexed', 0)} passages indexed, ~{round(elapsed)}s)"
+            if success
+            else f"indexing did not finish within 60s (last processing_status={processing_status})",
+        )
+        stats(
+            chunks_total=body.get("chunks_total"),
+            chunks_indexed=body.get("chunks_indexed"),
+            chunks_failed=body.get("chunks_failed"),
+            processing_progress=body.get("processing_progress"),
+            searchable=body.get("searchable"),
+            poll_attempts=i,
+            elapsed_s=round(elapsed, 3),
+        )
+        self.indexed_once = success
 
     def search(self) -> None:
-        self.poll_status()
+        """Always re-issues the search query, even if already run this
+        session -- confirms the same result is returned consistently."""
+        self.run_count += 1
+        self.ensure_indexed()
         if self.file_id is None:
             return
 
         step("Semantic search (the assignment's own example)")
+        t0 = time.monotonic()
         resp = self.client.post(
             f"{API_URL}/files/{self.file_id}/search",
             headers={"X-User-Id": USER_A},
             json={"query": "database connectivity problems", "top_k": 3},
         )
-        results = resp.json().get("results", [])
+        elapsed = time.monotonic() - t0
+        body = resp.json()
+        results = body.get("results", [])
         top_text = results[0]["text"] if results else ""
         found = "Connection to database failed" in top_text
         self.record(
             found,
-            f"query 'database connectivity problems' -> top hit is the DB error line (score={results[0]['score']})"
+            f"query 'database connectivity problems' -> top hit is the DB error line (score={results[0]['score']:.4f})"
             if found
             else f"expected top search hit to mention the DB error, got: {top_text!r}",
         )
+        scores = [f"{r['score']:.3f}" for r in results]
+        stats(
+            http_status=resp.status_code,
+            total_hits=body.get("total_hits"),
+            top_k_requested=3,
+            scores=scores,
+            elapsed_s=round(elapsed, 3),
+        )
 
     def ownership_isolation(self) -> None:
-        self.complete()
+        """Always re-checks that a second identity is refused the file."""
+        self.run_count += 1
+        self.ensure_uploaded_and_completed()
         if self.file_id is None:
             return
 
         step("Ownership isolation")
-        resp = self.client.get(f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_B})
+        t0 = time.monotonic()
+        owner_resp = self.client.get(f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_A})
+        other_resp = self.client.get(f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_B})
+        elapsed = time.monotonic() - t0
+        success = owner_resp.status_code == 200 and other_resp.status_code == 404
         self.record(
-            resp.status_code == 404,
-            "a different X-User-Id gets 404 for this file"
-            if resp.status_code == 404
-            else f"expected 404 for a non-owner, got HTTP {resp.status_code}",
+            success,
+            "owner sees the file (200), a different X-User-Id gets 404"
+            if success
+            else f"expected owner=200/other=404, got owner={owner_resp.status_code}/other={other_resp.status_code}",
+        )
+        stats(
+            owner_user=USER_A,
+            other_user=USER_B,
+            owner_http_status=owner_resp.status_code,
+            other_http_status=other_resp.status_code,
+            elapsed_s=round(elapsed, 3),
         )
 
     def list_files(self) -> None:
-        self.complete()
+        """Always re-lists -- reports how many files this owner currently has,
+        not just whether the one we care about is among them."""
+        self.run_count += 1
+        self.ensure_uploaded_and_completed()
         if self.file_id is None:
             return
 
         step("List uploads for the owner")
+        t0 = time.monotonic()
         resp = self.client.get(f"{API_URL}/files", headers={"X-User-Id": USER_A})
-        found = any(f["file_id"] == self.file_id for f in resp.json().get("files", []))
+        elapsed = time.monotonic() - t0
+        files = resp.json().get("files", [])
+        found = any(f["file_id"] == self.file_id for f in files)
         self.record(found, "uploaded file appears in GET /files" if found else "uploaded file missing from GET /files")
+        stats(
+            http_status=resp.status_code,
+            total_files_for_owner=len(files),
+            elapsed_s=round(elapsed, 3),
+        )
 
     def delete(self) -> None:
-        self.complete()
+        """Always deletes the current file_id, then always tries the delete
+        a second time too -- deleting an already-deleted (i.e. unknown)
+        file_id must 404, not 500 or succeed twice."""
+        self.run_count += 1
+        self.ensure_uploaded_and_completed()
         if self.file_id is None:
             return
+        deleted_id = self.file_id
 
         step("Delete the file")
-        resp = self.client.delete(f"{API_URL}/files/{self.file_id}", headers={"X-User-Id": USER_A})
+        t0 = time.monotonic()
+        resp = self.client.delete(f"{API_URL}/files/{deleted_id}", headers={"X-User-Id": USER_A})
+        first_delete_ok = resp.status_code == 204
         self.record(
-            resp.status_code == 204,
-            "DELETE returned 204" if resp.status_code == 204 else f"expected 204 from DELETE, got HTTP {resp.status_code}",
+            first_delete_ok,
+            "DELETE returned 204" if first_delete_ok else f"expected 204 from DELETE, got HTTP {resp.status_code}",
         )
 
-        resp = self.client.get(f"{API_URL}/files/{self.file_id}/status", headers={"X-User-Id": USER_A})
+        status_resp = self.client.get(f"{API_URL}/files/{deleted_id}/status", headers={"X-User-Id": USER_A})
+        gone = status_resp.status_code == 404
         self.record(
-            resp.status_code == 404,
+            gone,
             "file is gone after delete (404 on status)"
-            if resp.status_code == 404
-            else f"expected 404 after delete, got HTTP {resp.status_code}",
+            if gone
+            else f"expected 404 after delete, got HTTP {status_resp.status_code}",
         )
-        # A deleted file_id must not be reused by a later step this run.
+
+        # Deleting the same, now-unknown file_id again must 404, not error.
+        redelete_resp = self.client.delete(f"{API_URL}/files/{deleted_id}", headers={"X-User-Id": USER_A})
+        redelete_ok = redelete_resp.status_code == 404
+        self.record(
+            redelete_ok,
+            "deleting an already-deleted file_id 404s (idempotent, not an error)"
+            if redelete_ok
+            else f"expected 404 re-deleting a gone file, got HTTP {redelete_resp.status_code}",
+        )
+        elapsed = time.monotonic() - t0
+
+        stats(
+            deleted_file_id=deleted_id,
+            first_delete_status=resp.status_code,
+            status_after_delete=status_resp.status_code,
+            redelete_status=redelete_resp.status_code,
+            elapsed_s=round(elapsed, 3),
+        )
+
+        # This file_id is gone; a later step needs a new one.
         self.file_id = None
         self.bytes_sent = 0
-        self.completed = False
-        self.indexed = False
 
     def run_all(self) -> None:
         self.register()
@@ -258,22 +445,22 @@ class Session:
         self.delete()
 
     def summary(self) -> None:
-        print(f"\n== Summary: {self.passed} passed, {self.failed} failed ==")
+        print(f"\n== Summary: {self.passed} passed, {self.failed} failed ({self.run_count} steps run) ==")
 
 
 MENU: list[tuple[str, str]] = [
-    ("register", "Register a new upload"),
+    ("register", "Register a new upload (always creates a fresh file_id)"),
     ("upload_with_interrupt", "Upload in chunks, with a simulated mid-upload interruption"),
-    ("complete", "Complete the upload"),
+    ("complete", "Complete the upload (also verifies calling it twice is idempotent)"),
     ("poll_status", "Poll status until indexing catches up"),
     ("search", "Run the assignment's semantic search example"),
     ("ownership_isolation", "Confirm a different X-User-Id is refused the file"),
     ("list_files", "List uploads for the owner"),
-    ("delete", "Delete the file and confirm it's gone"),
+    ("delete", "Delete the file (also verifies re-deleting 404s, not errors)"),
 ]
 
 
-def start_compose() -> None:
+def start_compose() -> bool:
     step("Starting docker compose")
     result = subprocess.run(
         ["docker", "compose", "up", "-d", "--build"],
@@ -284,11 +471,10 @@ def start_compose() -> None:
     if result.returncode != 0:
         print(result.stdout)
         print(result.stderr)
-        ok_health = False
-    else:
-        ok("stack started")
-        ok_health = True
-    return ok_health
+        bad("docker compose up failed")
+        return False
+    ok("stack started")
+    return True
 
 
 def wait_for_health() -> bool:
@@ -298,6 +484,7 @@ def wait_for_health() -> bool:
             resp = httpx.get(HEALTH_URL, timeout=5)
             if resp.status_code == 200 and resp.json().get("status") == "ok":
                 ok(f"health check ok after ~{i * 2}s")
+                stats(**{k: v for k, v in resp.json().items()})
                 return True
         except httpx.HTTPError:
             pass
@@ -307,7 +494,7 @@ def wait_for_health() -> bool:
 
 
 def print_menu() -> None:
-    print("\nWhat do you want to run?")
+    print("\nWhat do you want to run? (always re-runs fresh, even if picked before)")
     for i, (_, label) in enumerate(MENU, start=1):
         print(f"  {i}. {label}")
     print("  a. Run all steps in order")
@@ -327,6 +514,8 @@ def interactive_loop(session: Session) -> None:
 
         try:
             index = int(choice) - 1
+            if index < 0:
+                raise ValueError
             name, _ = MENU[index]
         except (ValueError, IndexError):
             print("  Not a valid choice, try again.")

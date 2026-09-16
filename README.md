@@ -403,8 +403,17 @@ small chunks with a simulated mid-upload interruption (asserting `/status` repor
 offset), complete it, poll until indexing catches up, run the assignment's own semantic search
 example, confirm a second `X-User-Id` is refused the file, list it, then delete it and confirm it's
 gone. Picking a step that depends on an earlier one (e.g. search needs a completed upload) runs
-whatever hasn't happened yet for you first. Prints one `[PASS]`/`[FAIL]` line per assertion, shows
-the menu again after each choice, and exits non-zero if anything failed.
+whatever hasn't happened yet for you first.
+
+Every menu choice always redoes its real work -- picking the same number twice in a row (or
+picking "register" again mid-session) runs it again rather than silently skipping, which doubles as
+a live check of the API's own idempotency: `complete` is called twice in a row and must return
+`upload_status=completed` both times rather than erroring the second time, and `delete` is likewise
+followed by a second delete of the same (now-unknown) `file_id`, which must 404 rather than fail
+oddly. Each step prints its `[PASS]`/`[FAIL]` lines plus a `stats:` line with the relevant counters
+for that step (bytes/chunks/passages sent, HTTP status, elapsed seconds, indexed/failed counts,
+search scores, and so on). Shows the menu again after each choice and exits non-zero if anything
+failed.
 
 ```bash
 python3 scripts/e2e_test.py               # interactive menu (starts docker compose first)
