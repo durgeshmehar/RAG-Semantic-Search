@@ -76,6 +76,7 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
+
 app.include_router(v1_router, prefix="/v1")
 
 
@@ -100,7 +101,7 @@ register_openapi(app)
 
 
 
-"""Application entry point.
+"""Application main file - entry point.
 
 Startup order matters: the schema must exist before jobs can be recovered, and
 recovery must run before workers start, or a worker could claim a row that
