@@ -17,7 +17,9 @@ flight creates one automatically if none exists yet.
 
 Each step prints one [PASS]/[FAIL] line per assertion plus a short stats
 line (byte/chunk/passage counts, elapsed time, HTTP status) so a human
-watching the terminal gets more than just pass/fail.
+watching the terminal gets more than just pass/fail. The search step also
+prints the actual matched passages (rank, score, byte range, text) it got
+back, not just whether the top one was the expected one.
 
 Uses httpx, already a project dependency (see requirements.txt) for the
 TestClient in tests/ -- no extra install needed to run this.
@@ -61,6 +63,30 @@ def stats(**fields: object) -> None:
     """One compact line of extra numbers/state after a step's PASS/FAIL lines."""
     rendered = ", ".join(f"{k}={v}" for k, v in fields.items())
     print(f"  stats: {rendered}")
+
+
+def preview_text(text: str, highlight: str | None = None, width: int = 220) -> str:
+    """Shorten a passage for terminal display.
+
+    A passage can span many log lines, so a plain head-truncation can cut
+    off before the one line that actually explains why this hit matched
+    (e.g. the DB error line, well past character 200 in a multi-line
+    passage). When `highlight` appears in the text, center the window on
+    it instead of always showing the start.
+    """
+    text = text.strip()
+    if len(text) <= width:
+        return text
+
+    if highlight and highlight in text:
+        idx = text.index(highlight)
+        start = max(0, idx - width // 3)
+        end = min(len(text), start + width)
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(text) else ""
+        return f"{prefix}{text[start:end]}{suffix}"
+
+    return text[:width] + "..."
 
 
 class Session:
@@ -326,6 +352,16 @@ class Session:
             if found
             else f"expected top search hit to mention the DB error, got: {top_text!r}",
         )
+
+        info(f"query: {body.get('query')!r}")
+        for rank, hit in enumerate(results, start=1):
+            text = preview_text(hit["text"], highlight="Connection to database failed")
+            info(
+                f"  #{rank} score={hit['score']:.4f} sequence={hit['sequence']} "
+                f"bytes=[{hit['start_byte']}:{hit['end_byte']}]"
+            )
+            info(f"      text: {text!r}")
+
         scores = [f"{r['score']:.3f}" for r in results]
         stats(
             http_status=resp.status_code,
