@@ -68,8 +68,8 @@ def enqueue(
 def claim_batch(limit: int | None = None) -> list[ChunkJob]:
     """Atomically take up to `limit` pending jobs for this worker.
 
-    Grouped by file so a batch shares one FAISS index, and ordered by sequence
-    so vector positions stay monotonic within a file.
+    Grouped by file so a batch shares one Qdrant collection, and ordered by
+    sequence so vector positions stay monotonic within a file.
 
     The SELECT and UPDATE run inside one IMMEDIATE transaction; without that,
     two workers could read the same rows and embed them twice.
@@ -119,8 +119,7 @@ def complete_batch(jobs: list[ChunkJob]) -> None:
         chunk_repository.mark_indexed(conn, [job.chunk_id for job in jobs])
 
         file_id = jobs[0].file_id
-        watermark = max(job.end_byte for job in jobs)
-        file_repository.record_indexed(conn, file_id, count=len(jobs), watermark=watermark, now=now)
+        file_repository.record_indexed(conn, file_id, count=len(jobs), now=now)
         _refresh_processing_status(conn, file_id, now)
 
 

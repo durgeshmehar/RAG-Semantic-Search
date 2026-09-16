@@ -38,9 +38,6 @@ CREATE TABLE IF NOT EXISTS files (
     chunks_total       INTEGER NOT NULL DEFAULT 0,
     chunks_indexed     INTEGER NOT NULL DEFAULT 0,
     chunks_failed      INTEGER NOT NULL DEFAULT 0,
-    -- How far indexing has progressed, in bytes. Lets indexing resume from an
-    -- exact position after a crash rather than guessing from enqueued rows.
-    indexed_watermark  INTEGER NOT NULL DEFAULT 0,
     -- Partial trailing line held back by the chunker, persisted so an upload
     -- resumed after a restart doesn't lose or duplicate the split line.
     pending_tail       BLOB NOT NULL DEFAULT x'',

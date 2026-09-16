@@ -51,7 +51,6 @@ def looks_like_binary(sample: bytes) -> bool:
         # so a single split multi-byte character at the very end of the
         # sample doesn't get the same verdict as a file that's mostly
         # undecodable throughout.
-        pos = 0
         remaining = probe
         while remaining:
             try:

@@ -123,11 +123,12 @@ WORKER_COUNT = _int_env("WORKER_COUNT", 2)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 
-# Keep the int8-quantized vectors resident for search speed, while raw
-# float32 vectors and the HNSW graph stay on disk (see vector_store.py). This
-# is the actual RAM lever now: quantized vectors are 384 B each, so the
-# resident set for even a 10 GB file's ~2.8M passages is under 1.1 GB -- see
-# README section 1 for the sizing table this replaced.
+# Keep the int8-quantized vectors resident for search speed, while raw float32
+# vectors and the HNSW graph stay on disk (see
+# app/repositories/vector_repository.py). This is the actual RAM lever now:
+# quantized vectors are 384 B each, so the resident set for even a 10 GB
+# file's ~2.8M passages is under 1.1 GB -- see README section 1 for the
+# sizing table this replaced.
 QUANTIZATION_ALWAYS_RAM = _bool_env("QUANTIZATION_ALWAYS_RAM", True)
 
 # --- Job queue ------------------------------------------------------------

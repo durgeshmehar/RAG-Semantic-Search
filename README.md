@@ -342,6 +342,7 @@ naming convention, so a future v2 can be added as a sibling package without touc
 
 | Module | Responsibility |
 |---|---|
+| [app/main.py](app/main.py) | FastAPI app assembly and lifespan; wires routers, error handlers, OpenAPI together |
 | [app/core/exceptions.py](app/core/exceptions.py) | Domain exceptions, one per failure case |
 | [app/core/error_handlers.py](app/core/error_handlers.py) | Maps each domain exception to an HTTP status + body |
 | [app/core/openapi.py](app/core/openapi.py) | X-User-Id security scheme, hand-written chunk-upload schema |

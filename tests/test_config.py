@@ -5,9 +5,10 @@ but produce more vectors than can stay resident for a 10 GB file. These tests
 pin both ends of that -- typical files keep the precise default, and a 10 GB
 file's quantized vectors stay within the resident-memory budget.
 
-This budget applies to Qdrant's quantized vectors (see vector_store.py,
-QUANTIZATION_ALWAYS_RAM) rather than an in-process index file; the sizing math
-itself -- passages per byte, bytes per vector -- is unchanged by that choice.
+This budget applies to Qdrant's quantized vectors (see
+app/repositories/vector_repository.py, QUANTIZATION_ALWAYS_RAM) rather than an
+in-process index file; the sizing math itself -- passages per byte, bytes per
+vector -- is unchanged by that choice.
 """
 
 from app.core import config

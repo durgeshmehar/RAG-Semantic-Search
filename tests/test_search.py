@@ -8,8 +8,6 @@ These tests load the real embedding model, so they are slower than the rest of
 the suite.
 """
 
-import pytest
-
 from app.tasks import worker
 from tests.conftest import API, upload_file
 

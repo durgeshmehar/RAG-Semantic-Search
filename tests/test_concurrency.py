@@ -12,7 +12,7 @@ fails its offset check instead of racing it.
 
 import threading
 
-from tests.conftest import API, upload_file
+from tests.conftest import API
 
 
 def test_concurrent_puts_at_the_same_offset_do_not_duplicate_bytes(client):

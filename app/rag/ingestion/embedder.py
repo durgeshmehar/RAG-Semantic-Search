@@ -4,7 +4,8 @@ The model is loaded once and shared by every worker: it is ~90 MB of weights
 and re-loading per request would dominate both memory and latency.
 
 Vectors are L2-normalised at encode time so cosine similarity reduces to an
-inner product, which is what the FAISS index is built for.
+inner product, which is what Qdrant's distance metric is configured for (see
+app/repositories/vector_repository.py).
 """
 
 import threading
@@ -50,10 +51,5 @@ def embed_texts(texts: list[str]) -> np.ndarray:
 
 
 def embed_query(query: str) -> np.ndarray:
-    """Embed a search query as a (1, dim) array ready for FAISS."""
+    """Embed a search query as a (1, dim) array ready for a Qdrant search."""
     return embed_texts([query])
-
-
-def warm_up() -> None:
-    """Pull the model into memory at startup so the first search isn't slow."""
-    embed_texts(["warm up"])

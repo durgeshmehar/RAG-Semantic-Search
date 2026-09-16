@@ -128,7 +128,7 @@ def delete_all(file_id: str) -> None:
     """Remove this file's on-disk artifacts.
 
     Does not touch Qdrant -- callers drop the vector collection separately via
-    vector_store.drop(), since that's a network call rather than a local one.
+    vector_repository.drop(), since that's a network call rather than a local one.
     """
     for path in (partial_path(file_id), final_path(file_id)):
         path.unlink(missing_ok=True)

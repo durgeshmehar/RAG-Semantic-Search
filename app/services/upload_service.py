@@ -17,7 +17,6 @@ raises HTTPException, so these rules are callable and testable with no HTTP
 framework involved.
 """
 
-import time
 import uuid
 
 from .upload import validators

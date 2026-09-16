@@ -31,7 +31,6 @@ def isolated_env(monkeypatch):
 
         from app.core import config
         from app.db import db
-        from app.repositories import vector_repository
 
         monkeypatch.setattr(config, "DATA_DIR", root)
         monkeypatch.setattr(config, "UPLOAD_DIR", root / "uploads")

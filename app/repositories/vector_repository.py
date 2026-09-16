@@ -140,15 +140,6 @@ def add_vectors(
     client.upsert(collection_name=collection, points=points, wait=True)
 
 
-def vector_count(file_id: str) -> int:
-    """How many passages this file has indexed."""
-    client = get_client()
-    collection = collection_name(file_id)
-    if not client.collection_exists(collection):
-        return 0
-    return client.count(collection_name=collection, exact=True).count
-
-
 def drop(file_id: str) -> None:
     """Delete this file's collection."""
     client = get_client()

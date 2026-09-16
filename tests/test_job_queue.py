@@ -73,7 +73,7 @@ def test_empty_queue_returns_nothing(isolated_env):
     assert job_queue.claim_batch() == []
 
 
-def test_complete_marks_indexed_and_advances_watermark(isolated_env):
+def test_complete_marks_indexed(isolated_env):
     file_id = make_file()
     add_jobs(file_id, 3)
 
@@ -82,11 +82,10 @@ def test_complete_marks_indexed_and_advances_watermark(isolated_env):
 
     conn = db.get_connection()
     row = conn.execute(
-        "SELECT chunks_indexed, indexed_watermark FROM files WHERE file_id = ?",
+        "SELECT chunks_indexed FROM files WHERE file_id = ?",
         (file_id,),
     ).fetchone()
     assert row["chunks_indexed"] == 3
-    assert row["indexed_watermark"] == 300
     assert job_queue.pending_count(file_id) == 0
 
 
@@ -214,7 +213,7 @@ def test_enqueue_is_idempotent_on_sequence(isolated_env):
 
 
 def test_jobs_from_multiple_files_are_batched_separately(isolated_env):
-    """A batch shares one FAISS index, so it must not mix files."""
+    """A batch shares one Qdrant collection, so it must not mix files."""
     make_file("fa")
     make_file("fb")
     add_jobs("fa", 3)

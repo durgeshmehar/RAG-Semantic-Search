@@ -11,7 +11,6 @@ import time
 from dataclasses import dataclass
 
 from ..core.exceptions import FileNotFound
-from ..db import db
 
 
 @dataclass(frozen=True)
@@ -28,7 +27,6 @@ class FileRecord:
     chunks_total: int
     chunks_indexed: int
     chunks_failed: int
-    indexed_watermark: int
     pending_tail: bytes
     next_sequence: int
     error_message: str | None
@@ -48,7 +46,6 @@ class FileRecord:
             chunks_total=row["chunks_total"],
             chunks_indexed=row["chunks_indexed"],
             chunks_failed=row["chunks_failed"],
-            indexed_watermark=row["indexed_watermark"],
             pending_tail=bytes(row["pending_tail"]),
             next_sequence=row["next_sequence"],
             error_message=row["error_message"],
@@ -175,16 +172,15 @@ def mark_processing_started(conn, file_id: str, now: float) -> None:
     )
 
 
-def record_indexed(conn, file_id: str, *, count: int, watermark: int, now: float) -> None:
+def record_indexed(conn, file_id: str, *, count: int, now: float) -> None:
     conn.execute(
         """
         UPDATE files
            SET chunks_indexed = chunks_indexed + ?,
-               indexed_watermark = MAX(indexed_watermark, ?),
                updated_at = ?
          WHERE file_id = ?
         """,
-        (count, watermark, now, file_id),
+        (count, now, file_id),
     )
 
 

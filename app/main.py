@@ -98,12 +98,3 @@ def health() -> dict:
 
 register_error_handlers(app)
 register_openapi(app)
-
-
-
-"""Application main file - entry point.
-
-Startup order matters: the schema must exist before jobs can be recovered, and
-recovery must run before workers start, or a worker could claim a row that
-recovery is about to reset.
-"""

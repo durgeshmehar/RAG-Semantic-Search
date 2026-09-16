@@ -10,8 +10,8 @@ services:
       - ./data/qdrant:/qdrant/storage
     environment:
       # A conservative cap so quantized-vector residency (see
-      # app/vector_store.py) stays predictable rather than growing to
-      # whatever the host happens to have free.
+      # app/repositories/vector_repository.py) stays predictable rather than
+      # growing to whatever the host happens to have free.
       QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS: "2"
     deploy:
       resources:
