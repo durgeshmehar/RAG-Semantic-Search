@@ -149,8 +149,8 @@ WORKER_POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "0.5"))
 
 # --- Search ---------------------------------------------------------------
 
-DEFAULT_TOP_K = _int_env("DEFAULT_TOP_K", 10)
-MAX_TOP_K = _int_env("MAX_TOP_K", 100)
+DEFAULT_TOP_K = _int_env("DEFAULT_TOP_K", 5)
+MAX_TOP_K = _int_env("MAX_TOP_K", 20)
 
 
 def ensure_dirs() -> None:
