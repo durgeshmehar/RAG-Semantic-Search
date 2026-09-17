@@ -32,11 +32,11 @@ def search(file_id: str, owner_id: str, query: str, top_k: int) -> list[SearchHi
     been indexed so far is queryable.
     """
     # --- We can discard this check of records to make search faster
-    # conn = db.get_connection()
-    # record = sql_repository.files.get_owned(conn, file_id, owner_id)
+    conn = db.get_connection()
+    record = sql_repository.files.get_owned(conn, file_id, owner_id)
 
-    # if record.chunks_indexed == 0:
-    #     raise NothingIndexedYet()
+    if record.chunks_indexed == 0:
+        raise NothingIndexedYet()
 
     query_vector = embedder.embed_query(query)
     hits = retriever.search(file_id, query_vector, top_k)
