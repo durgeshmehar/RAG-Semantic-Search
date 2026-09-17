@@ -147,19 +147,29 @@ The file is never held in memory: chunks are appended to disk and released as th
 memory scales with concurrent uploads, not file size. Chunk rows store `(start_byte, end_byte)`
 rather than the text itself — the file on disk already has it, so nothing duplicates the corpus.
 
-Vectors live in Qdrant, one collection per file, with raw vectors and the HNSW graph on disk and
-only an int8-quantized copy (4× smaller than float32, ~2–3% recall cost) kept resident. Search is
-approximate (HNSW), not exhaustive.
+Vectors live in Qdrant, one collection *per file*, with raw vectors and the HNSW graph always on
+disk. The int8-quantized copy (4× smaller than float32, ~2–3% recall cost) is the one piece whose
+residency is a config choice (`QUANTIZATION_ALWAYS_RAM`, default `False`): with many users each
+holding files open at once, resident RAM would be the *sum* of every open file's quantized vectors,
+not a fixed per-file cost, so the default keeps the quantized copy on disk too -- one extra disk
+read per search, but total RAM stays flat no matter how many users or files exist concurrently.
+Setting it `True` trades that back for lower search latency, and only makes sense for a single- or
+few-user deployment where the file count (and therefore the RAM sum) is bounded by hand. Search is
+approximate (HNSW), not exhaustive, either way.
 
 Passage size scales with declared file size (`config.passage_size_for`): small passages embed
 precisely, but a 10 GB file at the smallest passage size would need ~22M vectors (~8 GB even
-quantized), so larger files get proportionally larger passages, keeping the resident footprint
-under 1 GB regardless of file size:
+quantized), so larger files get proportionally larger passages, keeping any *one* file's quantized
+footprint under 1 GB regardless of its size:
 
-| File size | Passage target | Resident quantized |
+| File size | Passage target | Quantized footprint (if resident) |
 |---|---|---|
 | ≤1 GB | 600 B | ≤0.8 GB |
 | 10 GB | 4,800 B | 1.0 GB |
+
+That per-file number is what `QUANTIZATION_ALWAYS_RAM=True` would keep resident for *each* open
+file -- the reason the default is `False` instead: ten users each with a 1 GB file open would be
+10 GB resident under the old always-on default, not 1 GB.
 
 The 4 GB budget applies to the whole service, not per container, so the two containers' Docker
 memory limits are sized to sum to 4 GB: **API 2G, Qdrant 2G**
@@ -169,9 +179,13 @@ declaring a full 10 GB upload (so `passage_size_for()` produced true 10GB-scale 
 uploading 180 MB of real content measured the API container peaking at ~880 MB (44% of a 2G limit)
 during the upload-plus-immediate-embedding burst — notably higher than a static arithmetic estimate
 predicted, because chunks can arrive faster than the fixed 2-worker pool drains them. Extrapolating
-that run's Qdrant usage to the full 10 GB scale gives ~1.0 GB resident. An earlier 2.75G/1.25G split
-gave Qdrant too little headroom at that extrapolated worst case relative to what the API actually
-needed at its measured peak; 2G/2G gives both containers comparable real margin instead.
+that run's Qdrant usage to the full 10 GB scale gave ~1.0 GB resident *with `QUANTIZATION_ALWAYS_RAM`
+at its earlier default of `True`* — since that default has since changed to `False` (see §1 above,
+driven by multi-user RAM growth rather than single-file sizing), real Qdrant residency for one file
+is now lower than this figure, giving the 2G Qdrant limit more headroom than the number below
+implies, not less. An earlier 2.75G/1.25G split gave Qdrant too little headroom at that extrapolated
+worst case relative to what the API actually needed at its measured peak; 2G/2G gives both
+containers comparable real margin instead.
 
 Nothing bounds concurrent embedding beyond the fixed worker count, but chunk *acceptance* had no
 equivalent ceiling — an unbounded burst of concurrent `PUT /chunk` requests, each holding up to

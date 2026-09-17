@@ -123,13 +123,18 @@ WORKER_COUNT = _int_env("WORKER_COUNT", 2)
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 
-# Keep the int8-quantized vectors resident for search speed, while raw float32
-# vectors and the HNSW graph stay on disk (see
-# app/repositories/vector_repository.py). This is the actual RAM lever now:
-# quantized vectors are 384 B each, so the resident set for even a 10 GB
-# file's ~2.8M passages is under 1.1 GB -- see README section 1 for the
-# sizing table this replaced.
-QUANTIZATION_ALWAYS_RAM = _bool_env("QUANTIZATION_ALWAYS_RAM", True)
+# Whether the int8-quantized vectors stay resident in RAM (raw float32
+# vectors and the HNSW graph are always on-disk regardless of this flag --
+# see app/repositories/vector_repository.py). There's one Qdrant collection
+# per uploaded file, so with many users/files at once, resident RAM is the
+# SUM of every file's quantized vectors, not a fixed per-file cost -- a
+# single 10 GB file's ~2.8M passages alone would be ~1.1 GB resident, and
+# that multiplies with concurrent users each holding files open. Defaulting
+# to False keeps total RAM flat regardless of how many files/users exist,
+# at the cost of a disk read per search instead of a RAM read (see README
+# section 1). Set to True only for a single/low-user deployment where
+# search latency matters more than RAM scaling with user count.
+QUANTIZATION_ALWAYS_RAM = _bool_env("QUANTIZATION_ALWAYS_RAM", False)
 
 # --- Job queue ------------------------------------------------------------
 
